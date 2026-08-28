@@ -1,13 +1,15 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.10
+// @version      1.14
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
 // @run-at       document-idle
 // @grant        none
 // @noframes
+// @updateURL    https://raw.githubusercontent.com/CCCMNSB/ASS-subtitles-overlay/main/ass-subtitle-overlay.user.js
+// @downloadURL  https://raw.githubusercontent.com/CCCMNSB/ASS-subtitles-overlay/main/ass-subtitle-overlay.user.js
 // ==/UserScript==
 
 (function () {
@@ -31,7 +33,7 @@
 
     // 用户可调设置
     const settings = {
-        fontScale: 100,   // 字号（%），100=按 ASS 原样
+        fontScale: 75,    // 字号（%），75=默认（对回 aegisub），可手动调
         borderPx: 0,      // 边框粗细（px），0=按 ASS 自动
         font: 'auto',     // 'auto'=跟随字幕字体；否则用指定字体名
         offsetPct: 0,     // 上下偏移（% of video height，负数=上移）
@@ -40,9 +42,9 @@
     // 实时生效：任何设置改动后把 lastTime 置回 -1，下一帧就重绘一次字幕
     function invalidate() { lastTime = -1; }
     function resetDefaults() {
-        settings.fontScale = 100; settings.borderPx = 0; settings.font = 'auto'; settings.offsetPct = 0; settings.assBg = true;
-        if (setRefs.sizeInput) setRefs.sizeInput.value = '100';
-        if (setRefs.sizeVal) setRefs.sizeVal.textContent = '100%';
+        settings.fontScale = 75; settings.borderPx = 0; settings.font = 'auto'; settings.offsetPct = 0; settings.assBg = true;
+        if (setRefs.sizeInput) setRefs.sizeInput.value = '75';
+        if (setRefs.sizeVal) setRefs.sizeVal.textContent = '75%';
         if (setRefs.bdInput) setRefs.bdInput.value = '0';
         if (setRefs.bdVal) setRefs.bdVal.textContent = '0px';
         if (setRefs.fontSel) setRefs.fontSel.value = 'auto';
@@ -88,11 +90,35 @@
     function area(el) { const r = el.getBoundingClientRect(); return r.width * r.height; }
 
     function setStatus(msg) { if (statusEl) statusEl.textContent = msg; }
-    function hideUi() { if (panel) panel.style.display = 'none'; }
-    function showUi() { if (panel) panel.style.display = 'block'; }
+    let panelVisible = true;      // 用户希望的面板可见性（≠ 全屏临时的隐藏）
+    let fsState = false;          // 当前是否全屏（用于只响应状态变化）
+    function setPanelDisplay(show) { if (panel) panel.style.display = show ? 'block' : 'none'; }
+    function hideUi() { panelVisible = false; setPanelDisplay(false); }
+    function showUi() { panelVisible = true; setPanelDisplay(true); }
     function togglePanel() {
         if (!panel) return;
-        panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+        panelVisible = !panelVisible;
+        setPanelDisplay(panelVisible);
+    }
+    // 全屏：进入→临时隐藏；退出→按用户意图恢复。用事件（fullscreen + resize）驱动，兼容 B站/YouTube。
+    function isFullscreen() {
+        if (document.fullscreenElement || document.webkitFullscreenElement) return true;
+        if (!video) return false;
+        if (video.webkitDisplayingFullscreen || video.mozFullScreen || video.msFullscreenElement) return true;
+        try {
+            // 兜底：视频几乎铺满视口即视为全屏（某些站点不置位 fullscreenElement，如 YouTube）
+            const r = video.getBoundingClientRect();
+            if (r.width >= window.innerWidth - 4 && r.height >= window.innerHeight - 4) return true;
+        } catch (e) {}
+        return false;
+    }
+    function applyFullscreenUi() {
+        if (isFullscreen()) setPanelDisplay(false);
+        else setPanelDisplay(panelVisible);
+    }
+    function checkFullscreen() {
+        const nowFs = isFullscreen();
+        if (nowFs !== fsState) { fsState = nowFs; applyFullscreenUi(); }
     }
 
     function mkBtn(text, color, cb) {
@@ -585,6 +611,12 @@
         window.addEventListener('keydown', function (e) {
             if (e.altKey && (e.key === 'a' || e.key === 'A')) { e.preventDefault(); togglePanel(); }
         });
+        // 全屏时自动隐藏面板，退出全屏恢复（字幕本身靠父容器跟随，不受影响）
+        // 事件驱动：fullscreen 事件 + resize（YouTube 全屏会改视口触发 resize），无轮询。
+        function onFullscreenChange() { checkFullscreen(); }
+        document.addEventListener('fullscreenchange', onFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+        window.addEventListener('resize', onFullscreenChange);
         setInterval(function () { if (!video || !document.body.contains(video)) video = findVideo(); }, 1500);
         requestAnimationFrame(tick);
         setStatus(video ? t('ready') : (uiLang === 'zh' ? '暂未找到 <video>，稍后自动重扫' : 'No <video> yet, re-scanning…'));

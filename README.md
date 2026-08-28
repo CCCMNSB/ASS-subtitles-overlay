@@ -35,6 +35,8 @@
    https://raw.githubusercontent.com/CCCMNSB/ASS-subtitles-overlay/main/ass-subtitle-overlay.user.js
    ```
 
+3. 装好后即可**自动更新**：脚本内置 `@updateURL`/`@downloadURL`，Tampermonkey 每天自动检查并更新，**以后无需手动复制粘贴**。
+
 ### 使用
 
 1. 在含 `<video>` 的页面，字幕面板出现在**右下角**。
@@ -88,6 +90,8 @@
    ```
    https://raw.githubusercontent.com/CCCMNSB/ASS-subtitles-overlay/main/ass-subtitle-overlay.user.js
    ```
+
+3. **Auto-update** is built in (`@updateURL`/`@downloadURL`): Tampermonkey checks for updates daily and applies them automatically — **no manual copy-paste needed**.
 
 ### Usage
 
