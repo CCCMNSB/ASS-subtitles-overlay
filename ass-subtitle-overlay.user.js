@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.26
+// @version      1.27
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -587,7 +587,7 @@
         if (!force && sameRepo && repoCache.data && (now - repoCache.ts) < repoThrottle) return repoCache.data;
         const headers = {};
         if (!force && sameRepo && repoCache.etag) headers['If-None-Match'] = repoCache.etag;
-        const res = await fetch(url, { headers });
+        const res = await fetch(url, { headers, cache: 'no-store' });   // 强制拿最新索引，避免浏览器缓存旧 index
         if (res.status === 304 && sameRepo && repoCache.data) { repoCache.ts = now; return repoCache.data; }
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
