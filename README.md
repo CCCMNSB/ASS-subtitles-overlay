@@ -8,6 +8,15 @@
 
 ## 中文
 
+> [!IMPORTANT]
+> **如果字幕没有出现（Chrome / Edge）：** 请先检查脚本管理器的「允许使用者指令码」是否已打开。
+>
+> 打开方式：地址栏输入 `chrome://extensions` → 找到你的脚本管理器（Tampermonkey / Violentmonkey）→ 打开 **「允许使用者指令码」**。
+>
+> - 只需打开 **一次**，它下面的 **所有** 脚本就都能运行，不用逐个设。
+> - 该开关只在 **Chrome / Edge** 需要；**Firefox 不需要**。
+> - 打开后**刷新视频页面**即可。
+
 ### 功能
 
 - **加载本地字幕文件**（ASS / SSA / SRT）直接叠加到页面视频上，无需上传。
@@ -52,6 +61,15 @@
 ---
 
 ## English
+
+> [!IMPORTANT]
+> **If subtitles don't appear (Chrome / Edge):** First check that the "Allow user scripts" toggle is enabled for your userscript manager.
+>
+> How: open `chrome://extensions` → find your manager (Tampermonkey / Violentmonkey) → enable **"Allow user scripts"**.
+>
+> - It only needs to be enabled **once**; it applies to **all** scripts in the manager.
+> - This toggle is required only on **Chrome / Edge**; **Firefox doesn't need it**.
+> - After enabling, **refresh the video page**.
 
 ### Features
 
