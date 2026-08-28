@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.28
+// @version      1.29
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -49,13 +49,13 @@
     const onlineRefs = {};                              // 在线字幕界面引用
     let onlineData = [];                                // 拉取的索引列表
     let onlinePage = 0;                                 // 当前已渲染的页
-    const ONLINE_PAGE = 30;                             // 每页条数
+    const ONLINE_PAGE = 10;                             // 每页条数
     let autoLoadTried = false;                          // 是否已尝试自动匹配
     let loadedSubtitleId = null;                        // 当前已加载的在线字幕 id
 
     // 用户可调设置
     const settings = {
-        fontScale: 75,    // 字号（%），75=默认（对回 aegisub），可手动调
+        fontScale: 55,    // 字号（%），默认 55，可手动调
         borderPx: 0,      // 边框粗细（px），0=按 ASS 自动
         font: 'auto',     // 'auto'=跟随字幕字体；否则用指定字体名
         offsetPct: 0,     // 上下偏移（% of video height，负数=上移）
@@ -66,7 +66,7 @@
     try { const f = GM_getValue('assp_font', ''); if (f) settings.font = f; } catch (e) {}
     // 读取其它设置（字号/边框/偏移/ASS背景/自动跳转）
     function saveSetting(k, v) { try { GM_setValue(k, v); } catch (e) {} }
-    try { const n = GM_getValue('assp_fontScale', ''); if (n !== '') settings.fontScale = +n || 75; } catch (e) {}
+    try { const n = GM_getValue('assp_fontScale', ''); if (n !== '') settings.fontScale = +n || 55; } catch (e) {}
     try { const n = GM_getValue('assp_borderPx', ''); if (n !== '') settings.borderPx = +n || 0; } catch (e) {}
     try { const n = GM_getValue('assp_offsetPct', ''); if (n !== '') settings.offsetPct = +n || 0; } catch (e) {}
     try { const n = GM_getValue('assp_assBg', ''); if (n !== '') settings.assBg = n === '1'; } catch (e) {}
@@ -74,11 +74,11 @@
     // 实时生效：任何设置改动后把 lastTime 置回 -1，下一帧就重绘一次字幕
     function invalidate() { lastTime = -1; }
     function resetDefaults() {
-        settings.fontScale = 75; settings.borderPx = 0; settings.font = 'auto'; settings.offsetPct = 0; settings.assBg = true;
-        if (setRefs.sizeInput) setRefs.sizeInput.value = '75';
-        if (setRefs.sizeVal) setRefs.sizeVal.textContent = '75%';
+        settings.fontScale = 55; settings.borderPx = 0; settings.font = 'auto'; settings.offsetPct = 0; settings.assBg = true; settings.autoJump = true;
+        if (setRefs.sizeInput) setRefs.sizeInput.value = '55';
+        if (setRefs.sizeVal) setRefs.sizeVal.value = '55%';
         if (setRefs.bdInput) setRefs.bdInput.value = '0';
-        if (setRefs.bdVal) setRefs.bdVal.textContent = '0px';
+        if (setRefs.bdVal) setRefs.bdVal.value = '0px';
         if (setRefs.fontSearch) setRefs.fontSearch.value = '';
         if (setRefs.fontUpdate) setRefs.fontUpdate();
         try { GM_setValue('assp_font', 'auto'); } catch (e) {}
@@ -92,13 +92,13 @@
         if (setRefs.repoInput) setRefs.repoInput.value = subtitleRepo;
         try { GM_setValue('assp_repo', subtitleRepo); } catch (e) {}
         repoCache = { etag: null, data: null, ts: 0, repo: '' };
-        saveSetting('assp_fontScale', 75); saveSetting('assp_borderPx', 0); saveSetting('assp_offsetPct', 0); saveSetting('assp_assBg', '1'); saveSetting('assp_autoJump', '1');
+        saveSetting('assp_fontScale', 55); saveSetting('assp_borderPx', 0); saveSetting('assp_offsetPct', 0); saveSetting('assp_assBg', '1'); saveSetting('assp_autoJump', '1');
         invalidate();
     }
 
     const I18N = {
-        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件', settingsBtn: '设置', fontsize: '字号', border: '边框', font: '字体', offset: '上下偏移', assbg: 'ASS 背景', autoJump: '自动跳转', auto: '默认（跟随字幕）', fontCustom: '或自定义字体名…', fontPlaceholder: '输入字体名，或从建议里选', fontSearch: '搜索字体…', reset: '恢复默认', online: '在线字幕', refresh: '刷新', back: '返回', search: '搜索标题/ID', loading: '加载中…', none: '未找到匹配的字幕', loadFail: '加载失败', repo: '字幕库', loaded: '已加载在线字幕：', prev: '上一页', next: '下一页', play: '打开视频', jump: '跳到该字幕开始', openTime: '打开视频并跳到该时间', jumpErr: '无法跳转' },
-        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file', settingsBtn: 'Settings', fontsize: 'Font size', border: 'Border', font: 'Font', offset: 'Up/Down', assbg: 'ASS bg', autoJump: 'Auto-jump', auto: 'Auto (follow subtitle)', fontCustom: 'or custom font name…', fontPlaceholder: 'Type a font name, or pick from suggestions', fontSearch: 'Search font…', reset: 'Reset', online: 'Online', refresh: 'Refresh', back: 'Back', search: 'Search title/ID', loading: 'Loading…', none: 'No match', loadFail: 'Load failed', repo: 'Repo', loaded: 'Loaded online: ', prev: '‹ Prev', next: 'Next ›', play: 'Play video', jump: 'Jump to start', openTime: 'Open video at this time', jumpErr: 'Cannot seek' }
+        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件', settingsBtn: '设置', fontsize: '字号', border: '边框', font: '字体', offset: '上下偏移', assbg: 'ASS 背景', autoJump: '跳过开头', auto: '默认（跟随字幕）', fontCustom: '或自定义字体名…', fontPlaceholder: '输入字体名，或从建议里选', fontSearch: '搜索字体…', reset: '恢复默认', online: '在线字幕', refresh: '刷新', back: '返回', search: '搜索标题/ID', loading: '加载中…', none: '未找到匹配的字幕', loadFail: '加载失败', repo: '字幕库', loaded: '已加载在线字幕：', prev: '上一页', next: '下一页', play: '打开视频', jump: '跳到该字幕开始', openTime: '打开视频并跳到该时间', jumpErr: '无法跳转' },
+        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file', settingsBtn: 'Settings', fontsize: 'Font size', border: 'Border', font: 'Font', offset: 'Up/Down', assbg: 'ASS bg', autoJump: 'Skip intro', auto: 'Auto (follow subtitle)', fontCustom: 'or custom font name…', fontPlaceholder: 'Type a font name, or pick from suggestions', fontSearch: 'Search font…', reset: 'Reset', online: 'Online', refresh: 'Refresh', back: 'Back', search: 'Search title/ID', loading: 'Loading…', none: 'No match', loadFail: 'Load failed', repo: 'Repo', loaded: 'Loaded online: ', prev: '‹ Prev', next: 'Next ›', play: 'Play video', jump: 'Jump to start', openTime: 'Open video at this time', jumpErr: 'Cannot seek' }
     };
     function t(key) { return I18N[uiLang][key]; }
     function applyLang() {
@@ -226,28 +226,54 @@
         box.id = 'assp-settings';
         box.style.cssText = 'margin-top:12px;border-top:1px solid #333;padding-top:10px;display:none;';
 
-        // 字号
+        // 字号（滑块 + 可输入数字，限制 40-300，非法回退 55）
         let r = mkRow(t('fontsize'));
         const sizeInput = document.createElement('input');
-        sizeInput.type = 'range'; sizeInput.min = '40'; sizeInput.max = '300'; sizeInput.step = '5'; sizeInput.value = settings.fontScale;
+        sizeInput.type = 'range'; sizeInput.min = '40'; sizeInput.max = '300'; sizeInput.step = '1'; sizeInput.value = settings.fontScale;
         sizeInput.style.cssText = 'flex:1;';
-        const sizeVal = document.createElement('span');
-        sizeVal.style.cssText = 'color:#eee;width:46px;text-align:right;';
-        sizeVal.textContent = settings.fontScale + '%';
-        sizeInput.addEventListener('input', function () { settings.fontScale = +sizeInput.value; sizeVal.textContent = settings.fontScale + '%'; invalidate(); saveSetting('assp_fontScale', settings.fontScale); });
+        const sizeVal = document.createElement('input');
+        sizeVal.type = 'text';
+        sizeVal.value = settings.fontScale + '%';
+        sizeVal.style.cssText = 'width:50px;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;text-align:right;box-sizing:border-box;';
+        function applySize(v) {
+            let s = String(v || '').replace(/[^0-9]/g, '').trim();
+            let n = parseInt(s, 10);
+            if (!isFinite(n)) n = 55;
+            n = Math.max(40, Math.min(300, n));
+            settings.fontScale = n;
+            sizeVal.value = n + '%';
+            sizeInput.value = n;
+            invalidate(); saveSetting('assp_fontScale', n);
+        }
+        sizeInput.addEventListener('input', function () { applySize(sizeInput.value); });
+        sizeVal.addEventListener('change', function () { applySize(sizeVal.value); });
+        sizeVal.addEventListener('blur', function () { applySize(sizeVal.value); });
         r.row.appendChild(sizeInput); r.row.appendChild(sizeVal);
         box.appendChild(r.row);
         setRefs.sizeLabel = r.label; setRefs.sizeVal = sizeVal; setRefs.sizeInput = sizeInput;
 
-        // 边框
+        // 边框（滑块 + 可输入数字，限制 0-20，非法回退 0）
         r = mkRow(t('border'));
         const bdInput = document.createElement('input');
         bdInput.type = 'range'; bdInput.min = '0'; bdInput.max = '20'; bdInput.step = '1'; bdInput.value = settings.borderPx;
         bdInput.style.cssText = 'flex:1;';
-        const bdVal = document.createElement('span');
-        bdVal.style.cssText = 'color:#eee;width:46px;text-align:right;';
-        bdVal.textContent = settings.borderPx + 'px';
-        bdInput.addEventListener('input', function () { settings.borderPx = +bdInput.value; bdVal.textContent = settings.borderPx + 'px'; invalidate(); saveSetting('assp_borderPx', settings.borderPx); });
+        const bdVal = document.createElement('input');
+        bdVal.type = 'text';
+        bdVal.value = settings.borderPx + 'px';
+        bdVal.style.cssText = 'width:50px;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;text-align:right;box-sizing:border-box;';
+        function applyBorder(v) {
+            let s = String(v || '').replace(/[^0-9]/g, '').trim();
+            let n = parseInt(s, 10);
+            if (!isFinite(n)) n = 0;
+            n = Math.max(0, Math.min(20, n));
+            settings.borderPx = n;
+            bdVal.value = n + 'px';
+            bdInput.value = n;
+            invalidate(); saveSetting('assp_borderPx', n);
+        }
+        bdInput.addEventListener('input', function () { applyBorder(bdInput.value); });
+        bdVal.addEventListener('change', function () { applyBorder(bdVal.value); });
+        bdVal.addEventListener('blur', function () { applyBorder(bdVal.value); });
         r.row.appendChild(bdInput); r.row.appendChild(bdVal);
         box.appendChild(r.row);
         setRefs.borderLabel = r.label; setRefs.bdVal = bdVal; setRefs.bdInput = bdInput;
@@ -335,25 +361,25 @@
         box.appendChild(r.row);
         setRefs.offsetLabel = r.label; setRefs.offVal = offVal; setRefs.offInput = offInput;
 
-        // ASS 背景
-        r = mkRow(t('assbg'));
-        const bgCheck = document.createElement('input');
-        bgCheck.type = 'checkbox'; bgCheck.checked = settings.assBg;
-        bgCheck.style.cssText = 'width:16px;height:16px;';
-        bgCheck.addEventListener('change', function () { settings.assBg = bgCheck.checked; invalidate(); saveSetting('assp_assBg', settings.assBg ? '1' : '0'); });
-        r.row.appendChild(bgCheck);
-        box.appendChild(r.row);
-        setRefs.assbgLabel = r.label; setRefs.bgCheck = bgCheck;
-
-        // 自动跳转（打开视频带时间）
-        r = mkRow(t('autoJump'));
-        const autoJumpCheck = document.createElement('input');
-        autoJumpCheck.type = 'checkbox'; autoJumpCheck.checked = settings.autoJump;
-        autoJumpCheck.style.cssText = 'width:16px;height:16px;';
-        autoJumpCheck.addEventListener('change', function () { settings.autoJump = autoJumpCheck.checked; saveSetting('assp_autoJump', settings.autoJump ? '1' : '0'); });
-        r.row.appendChild(autoJumpCheck);
-        box.appendChild(r.row);
-        setRefs.autoJumpLabel = r.label; setRefs.autoJumpCheck = autoJumpCheck;
+        // ASS 背景 | 跳过开头（自动跳转）—— 同排
+        const chkRow = document.createElement('div');
+        chkRow.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:8px;';
+        function chk(labelText, checked, onChange) {
+            const wrap = document.createElement('div');
+            wrap.style.cssText = 'display:flex;align-items:center;gap:4px;flex:1;';
+            const lab = document.createElement('span');
+            lab.textContent = labelText; lab.style.cssText = 'color:#aaa;';
+            const c = document.createElement('input');
+            c.type = 'checkbox'; c.checked = checked; c.style.cssText = 'width:16px;height:16px;';
+            c.addEventListener('change', function () { onChange(c.checked); });
+            wrap.appendChild(lab); wrap.appendChild(c);
+            return { wrap: wrap, lab: lab, check: c };
+        }
+        const bg = chk(t('assbg'), settings.assBg, function (v) { settings.assBg = v; invalidate(); saveSetting('assp_assBg', v ? '1' : '0'); });
+        const jp = chk(t('autoJump'), settings.autoJump, function (v) { settings.autoJump = v; saveSetting('assp_autoJump', v ? '1' : '0'); });
+        chkRow.appendChild(bg.wrap); chkRow.appendChild(jp.wrap);
+        box.appendChild(chkRow);
+        setRefs.assbgLabel = bg.lab; setRefs.bgCheck = bg.check; setRefs.autoJumpLabel = jp.lab; setRefs.autoJumpCheck = jp.check;
 
         // 字幕库地址
         r = mkRow(t('repo'));
@@ -580,16 +606,14 @@
         return null;
     }
 
-    // 拉取 index/index.json，带 ETag 缓存 + 30s 更新节流；缓存按仓库地址区分，改仓库自动失效
+    // 拉取 index/index.json，带 ETag 缓存 + 304 条件请求（没变就 304 空回应，低压力）
     async function fetchRepoList(force) {
         const url = repoBase() + '/index/index.json';
         const now = Date.now();
         const sameRepo = repoCache.repo === subtitleRepo;
-        if (!force && sameRepo && repoCache.data && (now - repoCache.ts) < repoThrottle) return repoCache.data;
         const headers = {};
         if (!force && sameRepo && repoCache.etag) headers['If-None-Match'] = repoCache.etag;
-        const fetchOpts = { headers };
-        if (force) fetchOpts.cache = 'reload';   // 仅在按"刷新"时绕过浏览器缓存；平时走浏览器缓存(max-age/ETag)
+        const fetchOpts = { headers, cache: force ? 'reload' : 'no-cache' };   // 平时 no-cache(304 复用)；刷新 reload 强拉
         const res = await fetch(url, fetchOpts);
         if (res.status === 304 && sameRepo && repoCache.data) { repoCache.ts = now; return repoCache.data; }
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -739,13 +763,6 @@
     }
 
     async function openOnline(force) {
-        if (force) {
-            if (Date.now() - lastRefreshTs < repoThrottle) {
-                setStatus(uiLang === 'zh' ? '刷新太频繁，30 秒后再试' : 'Refresh too often, wait 30s');
-                return;   // 30s 内不再强制刷新（列表保持现状）
-            }
-            lastRefreshTs = Date.now();
-        }
         onlineOpen = true;
         if (mainBox) mainBox.style.display = 'none';
         if (onlineBox) onlineBox.style.display = '';
