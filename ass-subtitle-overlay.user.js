@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.6
+// @version      1.7
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -518,11 +518,12 @@
                 fam = (e.fontname ? "'" + e.fontname + "'," : '') + "'Noto Sans CJK SC','Noto Sans SC','Microsoft YaHei',sans-serif";
             }
             const bg = settings.assBg && e.borderStyle === 3 && e.backColour;
+            const padT = bg ? 2 : 0, padX = bg ? 6 : 0;   // 背景框的内边距；补偿到定位上以免文字位移
             let css = 'position:absolute;white-space:pre;color:' + e.primary
                 + ';font-size:' + size + 'px;'
                 + 'font-family:' + fam + ';'
                 + 'font-weight:' + (e.bold ? 700 : 400) + ';'
-                + 'line-height:' + lineH + 'px;top:' + y + 'px;'
+                + 'line-height:' + lineH + 'px;top:' + (y - padT) + 'px;'
                 + '-webkit-text-stroke:' + stroke + 'px ' + e.outline + ';'
                 + 'paint-order:stroke fill;';
             if (bg) css += 'background:' + assColorA(e.backColour) + ';padding:2px 6px;border-radius:2px;';
@@ -538,10 +539,10 @@
                     transform = 'translate(0,' + offPx + 'px)';
                 }
             } else if (mod === 1) {
-                css += 'left:' + (w * 0.03) + 'px;';
+                css += 'left:' + (w * 0.03 - padX) + 'px;';
                 transform = 'translate(0,' + offPx + 'px)';
             } else {
-                css += 'right:' + (w * 0.03) + 'px;';
+                css += 'right:' + (w * 0.03 - padX) + 'px;';
                 transform = 'translate(0,' + offPx + 'px)';
             }
             css += 'transform:' + transform + ';';
