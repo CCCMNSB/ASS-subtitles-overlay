@@ -45,6 +45,16 @@
 4. 字幕直接叠加在视频上，随播放显示。
 5. 用 **显示 / 隐藏** 开关，**重新绑定视频** 重新关联视频，**×** 隐藏面板（或按 **Alt+A** 显示/隐藏）。
 
+### 在线字幕
+
+- 面板点「**在线字幕**」→ 打开你 GitHub 字幕库的列表（默认 `raw.githubusercontent.com/CCCMNSB/subtitles/main`）。
+- 支持 **搜索**（标题/ID）、**日期倒序**、**分页**（上一页/下一页）、**刷新**。
+- **点整行** = 把这条字幕**切换**到当前视频上显示。
+- **点 ▶** = **打开该视频并自动跳到该字幕开始时间**（用 `t=秒数` 链接，稳）。
+- 打开视频页时会**按视频 ID 自动匹配**字幕库并加载（匹配不到就静静跳过）。
+- 字幕库地址可在「设置」里改（也可换 **jsDelivr CDN**）。
+- 索引带 **ETag 缓存** + **30s 刷新节流**。
+
 ### 快捷键
 
 | 按键 | 作用 |
@@ -100,6 +110,16 @@
 3. Click **Load Local Subtitle** and pick your `.ass` / `.ssa` / `.srt` file.
 4. Subtitles are drawn directly on the video, following playback.
 5. Use **Show / Hide** to toggle, **Re-bind Video** to re-attach to the video, and **×** to hide the panel (or press **Alt+A** to show/hide it).
+
+### Online Subtitles
+
+- Click **Online Subtitles** in the panel to open your GitHub subtitle library (default `raw.githubusercontent.com/CCCMNSB/subtitles/main`).
+- Supports **search** (title/ID), **newest-first by date**, **pagination** (Prev / Next), and **refresh**.
+- **Click a row** to **switch** that subtitle onto the current video.
+- **Click ▶** to **open the video and auto-jump to that subtitle's start time** (via a `t=seconds` link — reliable).
+- On a video page it **auto-matches the video ID** to the library and loads the subtitle (silently skips if no match).
+- The library URL is configurable in **Settings** (can switch to the **jsDelivr CDN**).
+- The index uses **ETag caching** plus a **30s refresh throttle**.
 
 ### Shortcut
 

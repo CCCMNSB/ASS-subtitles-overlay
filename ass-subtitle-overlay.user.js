@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.14
+// @version      1.16
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -30,6 +30,24 @@
     const setRefs = {};              // 设置面板控件引用
     let settingsBox = null;
     let settingOpen = false;
+    // ---- 在线字幕库（GitHub 仓库）----
+    const DEFAULT_REPO = 'https://raw.githubusercontent.com/CCCMNSB/subtitles/main';
+    let subtitleRepo = DEFAULT_REPO;                    // 字幕库地址（可在设置里改）
+    let repoCache = { etag: null, data: null, ts: 0 };  // 索引缓存 + ETag
+    const repoThrottle = 30000;                         // 刷新节流(ms)
+    let mainBox = null;                                 // 面板主控件容器
+    let onlineBox = null;                               // 在线字幕列表容器
+    let onlineListEl = null;                            // 列表滚动容器
+    let onlineSearch = null;                            // 搜索框
+    let currentVideoId = null;                          // 当前视频 id（由 URL 提取）
+    let autoLoadedId = null;                            // 已自动加载的 id，防重复
+    let onlineOpen = false;
+    const onlineRefs = {};                              // 在线字幕界面引用
+    let onlineData = [];                                // 拉取的索引列表
+    let onlinePage = 0;                                 // 当前已渲染的页
+    const ONLINE_PAGE = 30;                             // 每页条数
+    let autoLoadTried = false;                          // 是否已尝试自动匹配
+    let loadedSubtitleId = null;                        // 当前已加载的在线字幕 id
 
     // 用户可调设置
     const settings = {
@@ -55,8 +73,8 @@
     }
 
     const I18N = {
-        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件', settingsBtn: '设置', fontsize: '字号', border: '边框', font: '字体', offset: '上下偏移', assbg: 'ASS 背景', auto: '默认（跟随字幕）', fontCustom: '或自定义字体名…', reset: '恢复默认' },
-        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file', settingsBtn: 'Settings', fontsize: 'Font size', border: 'Border', font: 'Font', offset: 'Up/Down', assbg: 'ASS bg', auto: 'Auto (follow subtitle)', fontCustom: 'or custom font name…', reset: 'Reset' }
+        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件', settingsBtn: '设置', fontsize: '字号', border: '边框', font: '字体', offset: '上下偏移', assbg: 'ASS 背景', auto: '默认（跟随字幕）', fontCustom: '或自定义字体名…', reset: '恢复默认', online: '在线字幕', refresh: '刷新', back: '返回', search: '搜索标题/ID', loading: '加载中…', none: '未找到匹配的字幕', loadFail: '加载失败', repo: '字幕库', loaded: '已加载在线字幕：', prev: '上一页', next: '下一页', play: '打开视频', jump: '跳到该字幕开始', openTime: '打开视频并跳到该时间', jumpErr: '无法跳转' },
+        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file', settingsBtn: 'Settings', fontsize: 'Font size', border: 'Border', font: 'Font', offset: 'Up/Down', assbg: 'ASS bg', auto: 'Auto (follow subtitle)', fontCustom: 'or custom font name…', reset: 'Reset', online: 'Online', refresh: 'Refresh', back: 'Back', search: 'Search title/ID', loading: 'Loading…', none: 'No match', loadFail: 'Load failed', repo: 'Repo', loaded: 'Loaded online: ', prev: '‹ Prev', next: 'Next ›', play: 'Play video', jump: 'Jump to start', openTime: 'Open video at this time', jumpErr: 'Cannot seek' }
     };
     function t(key) { return I18N[uiLang][key]; }
     function applyLang() {
@@ -68,14 +86,23 @@
         uiRefs.bToggle.textContent = t('toggle');
         uiRefs.bRebind.textContent = t('rebind');
         if (uiRefs.bSettings) uiRefs.bSettings.textContent = t('settingsBtn');
+        if (uiRefs.bOnline) uiRefs.bOnline.textContent = t('online');
         // 设置面板标签
         if (setRefs.sizeLabel) setRefs.sizeLabel.textContent = t('fontsize');
         if (setRefs.borderLabel) setRefs.borderLabel.textContent = t('border');
         if (setRefs.fontLabel) setRefs.fontLabel.textContent = t('font');
         if (setRefs.offsetLabel) setRefs.offsetLabel.textContent = t('offset');
         if (setRefs.assbgLabel) setRefs.assbgLabel.textContent = t('assbg');
+        if (setRefs.repoLabel) setRefs.repoLabel.textContent = t('repo');
         if (setRefs.fontSel) setRefs.fontSel.options[0].textContent = t('auto');
         if (setRefs.fontCustom) setRefs.fontCustom.placeholder = t('fontCustom');
+        // 在线字幕界面标签
+        if (onlineRefs.bBack) onlineRefs.bBack.textContent = t('back');
+        if (onlineRefs.oTitle) onlineRefs.oTitle.textContent = t('online');
+        if (onlineRefs.bRefresh) onlineRefs.bRefresh.textContent = t('refresh');
+        if (onlineRefs.search) onlineRefs.search.placeholder = t('search');
+        if (onlineRefs.bPrev) onlineRefs.bPrev.textContent = t('prev');
+        if (onlineRefs.bNext) onlineRefs.bNext.textContent = t('next');
         // 高亮当前语言
         uiRefs.segZh.style.background = uiLang === 'zh' ? '#1e88e5' : 'transparent';
         uiRefs.segEn.style.background = uiLang === 'en' ? '#1e88e5' : 'transparent';
@@ -208,6 +235,16 @@
         box.appendChild(r.row);
         setRefs.assbgLabel = r.label; setRefs.bgCheck = bgCheck;
 
+        // 字幕库地址
+        r = mkRow(t('repo'));
+        const repoInput = document.createElement('input');
+        repoInput.type = 'text'; repoInput.value = subtitleRepo;
+        repoInput.style.cssText = 'flex:1;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;';
+        repoInput.addEventListener('input', function () { subtitleRepo = repoInput.value.trim() || DEFAULT_REPO; });
+        r.row.appendChild(repoInput);
+        box.appendChild(r.row);
+        setRefs.repoLabel = r.label; setRefs.repoInput = repoInput;
+
         // 恢复默认
         const bReset = mkBtn(t('reset'), '#e53935', resetDefaults);
         bReset.style.width = '100%';
@@ -239,6 +276,9 @@
         titleRow.appendChild(title);
         titleRow.appendChild(closeBtn);
         panel.appendChild(titleRow);
+        mainBox = document.createElement('div');
+        mainBox.style.cssText = '';
+        panel.appendChild(mainBox);
 
         // 语言行
         const langRow = document.createElement('div');
@@ -259,12 +299,12 @@
         langSeg.appendChild(segEn);
         langRow.appendChild(langLabel);
         langRow.appendChild(langSeg);
-        panel.appendChild(langRow);
+        mainBox.appendChild(langRow);
 
         // 加载本地字幕
         const bLoad = mkBtn('', '#1e88e5', function () { file.click(); });
         bLoad.style.width = '100%';
-        panel.appendChild(bLoad);
+        mainBox.appendChild(bLoad);
 
         // 两个按钮并排
         const rowwrap = document.createElement('div');
@@ -282,7 +322,13 @@
         bRebind.style.flex = '1';
         rowwrap.appendChild(bToggle);
         rowwrap.appendChild(bRebind);
-        panel.appendChild(rowwrap);
+        mainBox.appendChild(rowwrap);
+
+        // 在线字幕按钮
+        const bOnline = mkBtn('', '#0d47a1', function () { openOnline(false); });
+        bOnline.style.width = '100%';
+        bOnline.style.marginTop = '8px';
+        mainBox.appendChild(bOnline);
 
         // 设置按钮 + 设置面板
         const bSettings = mkBtn('', '#8e24aa', function () {
@@ -291,14 +337,59 @@
         });
         bSettings.style.width = '100%';
         bSettings.style.marginTop = '8px';
-        panel.appendChild(bSettings);
+        mainBox.appendChild(bSettings);
         settingsBox = buildSettings();
-        panel.appendChild(settingsBox);
+        mainBox.appendChild(settingsBox);
 
         // 状态
         statusEl = document.createElement('div');
         statusEl.style.cssText = 'margin-top:10px;color:#aaa;word-break:break-all;';
-        panel.appendChild(statusEl);
+        mainBox.appendChild(statusEl);
+
+        // 在线字幕列表容器
+        onlineBox = document.createElement('div');
+        onlineBox.style.cssText = 'display:none;';
+        const oHead = document.createElement('div');
+        oHead.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:8px;';
+        const bBack = mkBtn(t('back'), '#616161', closeOnline);
+        bBack.style.flex = '0 0 52px'; bBack.style.padding = '6px 0';
+        const oTitle = document.createElement('div');
+        oTitle.style.cssText = 'font-weight:700;flex:1;';
+        oTitle.textContent = t('online');
+        oHead.appendChild(bBack); oHead.appendChild(oTitle);
+        onlineBox.appendChild(oHead);
+
+        const oSearchRow = document.createElement('div');
+        oSearchRow.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
+        onlineSearch = document.createElement('input');
+        onlineSearch.type = 'text'; onlineSearch.placeholder = t('search');
+        onlineSearch.style.cssText = 'flex:1;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;';
+        onlineSearch.addEventListener('input', function () { renderOnlineList(false); });
+        const bRefresh = mkBtn(t('refresh'), '#0d47a1', function () { openOnline(true); });
+        bRefresh.style.flex = '0 0 52px'; bRefresh.style.padding = '6px 0';
+        oSearchRow.appendChild(onlineSearch); oSearchRow.appendChild(bRefresh);
+        onlineBox.appendChild(oSearchRow);
+
+        onlineListEl = document.createElement('div');
+        onlineListEl.style.cssText = 'max-height:200px;overflow-y:auto;';
+        onlineBox.appendChild(onlineListEl);
+
+        // 分页导航条
+        const pager = document.createElement('div');
+        pager.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:8px;';
+        const bPrev = mkBtn(t('prev'), '#616161', function () { onlineMove(-1); });
+        bPrev.style.flex = '0 0 52px'; bPrev.style.padding = '6px 0';
+        const pageInfo = document.createElement('div');
+        pageInfo.style.cssText = 'flex:1;color:#aaa;font-size:11px;text-align:center;';
+        const bNext = mkBtn(t('next'), '#616161', function () { onlineMove(1); });
+        bNext.style.flex = '0 0 52px'; bNext.style.padding = '6px 0';
+        pager.appendChild(bPrev); pager.appendChild(pageInfo); pager.appendChild(bNext);
+        onlineBox.appendChild(pager);
+
+        panel.appendChild(onlineBox);
+
+        onlineRefs.bBack = bBack; onlineRefs.oTitle = oTitle; onlineRefs.bRefresh = bRefresh;
+        onlineRefs.bPrev = bPrev; onlineRefs.bNext = bNext; onlineRefs.pageInfo = pageInfo;
 
         document.body.appendChild(panel);
 
@@ -322,7 +413,8 @@
         // 保存引用
         uiRefs.title = title; uiRefs.langLabel = langLabel; uiRefs.segZh = segZh; uiRefs.segEn = segEn;
         uiRefs.bLoad = bLoad; uiRefs.bToggle = bToggle; uiRefs.bRebind = bRebind;
-        uiRefs.bSettings = bSettings;
+        uiRefs.bSettings = bSettings; uiRefs.bOnline = bOnline;
+        onlineRefs.search = onlineSearch;
         applyLang();
         setStatus(t('ready'));
     }
@@ -347,6 +439,212 @@
         };
         r.onerror = function () { setStatus(uiLang === 'zh' ? '读取文件失败' : 'Failed to read file'); };
         r.readAsText(file);
+    }
+
+    // ------------------------------ 在线字幕库（GitHub 仓库）
+    function repoBase() { return subtitleRepo.replace(/\/+$/, ''); }
+
+    // 从当前 URL 提取视频 id（处理 watch?v=…&t=…、youtu.be、shorts/embed/live、B站 BV）​
+    function videoIdFromUrl() {
+        let m;
+        m = /[?&]v=([A-Za-z0-9_-]{11})/.exec(location.href);          // youtube.com/watch?v=ID 后面带任意参数
+        if (m) return m[1];
+        m = /\/(?:youtu\.be\/|shorts\/|embed\/|live\/)([A-Za-z0-9_-]{11})/.exec(location.href);
+        if (m) return m[1];
+        m = /(BV[A-Za-z0-9]{10})/.exec(location.href);               // 哔哩哔哩 BV 号（含 URL 末尾参数）
+        if (m) return m[0];
+        return null;
+    }
+
+    // 拉取 index/index.json，带 ETag 缓存 + 30s 更新节流
+    async function fetchRepoList(force) {
+        const url = repoBase() + '/index/index.json';
+        const now = Date.now();
+        if (!force && repoCache.data && (now - repoCache.ts) < repoThrottle) return repoCache.data;
+        const headers = {};
+        if (!force && repoCache.etag) headers['If-None-Match'] = repoCache.etag;
+        const res = await fetch(url, { headers });
+        if (res.status === 304 && repoCache.data) { repoCache.ts = now; return repoCache.data; }
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        repoCache.etag = res.headers.get('ETag') || null;
+        repoCache.data = data;
+        repoCache.ts = now;
+        return data;
+    }
+
+    // 拉取某个 id 的字幕文本（先试 .ass 再试 .srt）；返回文本或 null
+    async function fetchSubtitleText(id) {
+        const base = repoBase();
+        for (const ext of ['ass', 'srt']) {
+            const r = await fetch(base + '/subtitles/' + encodeURIComponent(id) + '.' + ext, { cache: 'no-store' });
+            if (r.ok) return await r.text();
+        }
+        return null;
+    }
+    // 拉取并渲染到当前视频（在线字幕切换）
+    async function loadSubtitleById(id) {
+        const text = await fetchSubtitleText(id);
+        if (!text) return false;
+        applySubtitleText(text, /\[script info\]/i.test(text) ? 'ASS' : 'SRT');
+        loadedSubtitleId = id;
+        return true;
+    }
+    function applySubtitleText(text, kind) {
+        events = /\[script info\]/i.test(text) ? parseASS(text) : parseSRT(text);
+        currentSource = /\[script info\]/i.test(text) ? 'ASS' : 'SRT';
+        active = true; ensureOverlay(); overlay.style.display = '';
+        lastTime = -1;
+    }
+
+    const SUB_JUMP_BACK = 5;   // 打开视频时跳转到字幕开始前 N 秒
+
+    // 左边点击行：切换/加载该在线字幕到当前视频（仅显示，不跳转）
+    async function loadOnlineSubtitle(id, entry) {
+        setStatus(t('loading'));
+        try {
+            const ok = await loadSubtitleById(id);
+            if (ok) setStatus(t('loaded') + (entry ? (entry.title || id) : id));
+            else setStatus(t('loadFail') + ' ' + id);
+        } catch (e) { setStatus(t('loadFail') + ' ' + id); }
+    }
+
+    // 右边 ▶：打开该字幕对应的视频，并自动跳到该字幕开始时间（用 t= 秒数链接）
+    async function openOnlineVideoAtStart(id) {
+        let startSec = 0;
+        if (loadedSubtitleId === id && events.length) {
+            startSec = (events[0].startMs || 0) / 1000;   // 已加载过，直接用第一条
+        } else {
+            try {
+                const text = await fetchSubtitleText(id);
+                if (text) {
+                    const ev = /\[script info\]/i.test(text) ? parseASS(text) : parseSRT(text);
+                    if (ev.length) startSec = (ev[0].startMs || 0) / 1000;
+                }
+            } catch (e) {}
+        }
+        let target = Math.floor(startSec - SUB_JUMP_BACK);
+        if (!isFinite(target) || target < 0) target = 0;   // 兜底：绝不为负
+        const url = /^BV/i.test(id)
+            ? 'https://www.bilibili.com/video/' + encodeURIComponent(id) + '?t=' + target
+            : 'https://www.youtube.com/watch?v=' + encodeURIComponent(id) + '&t=' + target + 's';
+        window.open(url, '_blank', 'noopener');
+    }
+
+    // ---------- 在线字幕列表渲染（分页）----------
+    function clearOnlineList() { while (onlineListEl && onlineListEl.firstChild) onlineListEl.removeChild(onlineListEl.firstChild); }
+    function getFilteredList() {
+        const q = (onlineSearch ? onlineSearch.value : '').trim().toLowerCase();
+        return onlineData.slice()
+            .filter(function (e) { return !q || (String(e.id) + ' ' + String(e.title || '')).toLowerCase().indexOf(q) >= 0; })
+            .sort(function (a, b) { return String(b.date || '') < String(a.date || '') ? -1 : 1; });
+    }
+    function pageTotal(list) { return Math.max(1, Math.ceil(list.length / ONLINE_PAGE)); }
+    function pageText(p, tp, n) {
+        return uiLang === 'zh' ? ('第 ' + p + ' / ' + tp + ' 页 · 共 ' + n + ' 条')
+            : ('Page ' + p + ' / ' + tp + ' · ' + n + ' items');
+    }
+    function updatePager(list) {
+        const tp = pageTotal(list);
+        if (onlineRefs.bPrev) onlineRefs.bPrev.disabled = onlinePage <= 0;
+        if (onlineRefs.bNext) onlineRefs.bNext.disabled = onlinePage >= tp - 1;
+        if (onlineRefs.pageInfo) onlineRefs.pageInfo.textContent = pageText(onlinePage + 1, tp, list.length);
+    }
+    function appendOnlineRow(e) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:7px 8px;margin-bottom:6px;background:#2b2b2b;border-radius:6px;cursor:pointer;';
+        const body = document.createElement('div');
+        body.style.cssText = 'flex:1;min-width:0;';
+        const title = document.createElement('div');
+        title.style.cssText = 'color:#eee;font-size:12.5px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        title.textContent = e.title || e.id;
+        const meta = document.createElement('div');
+        meta.style.cssText = 'color:#888;font-size:11px;margin-top:2px;';
+        meta.textContent = e.id + ' · ' + (e.date || '');
+        body.appendChild(title); body.appendChild(meta);
+        const play = document.createElement('button');
+        play.type = 'button';
+        play.textContent = '▶';
+        play.setAttribute('title', t('openTime'));
+        play.style.cssText = 'flex-shrink:0;background:#0d47a1;color:#fff;border:0;border-radius:6px;padding:6px 8px;cursor:pointer;font-size:12px;';
+        play.addEventListener('click', function (ev) { ev.stopPropagation(); openOnlineVideoAtStart(e.id); });
+        row.appendChild(body); row.appendChild(play);
+        row.addEventListener('click', function () { loadOnlineSubtitle(e.id, e); });
+        onlineListEl.appendChild(row);
+    }
+    function renderOnlineList() {
+        if (!onlineListEl) return;
+        const list = getFilteredList();
+        const tp = pageTotal(list);
+        if (onlinePage > tp - 1) onlinePage = tp - 1;
+        if (onlinePage < 0) onlinePage = 0;
+        clearOnlineList();
+        if (!list.length) {
+            const none = document.createElement('div');
+            none.style.cssText = 'color:#888;font-size:12px;padding:8px 0;';
+            none.textContent = t('none');
+            onlineListEl.appendChild(none);
+            updatePager(list);
+            return;
+        }
+        const start = onlinePage * ONLINE_PAGE;
+        const end = Math.min(start + ONLINE_PAGE, list.length);
+        for (let i = start; i < end; i++) appendOnlineRow(list[i]);
+        updatePager(list);
+        onlineListEl.scrollTop = 0;
+    }
+    function onlineMove(delta) {
+        const list = getFilteredList();
+        const tp = pageTotal(list);
+        let p = onlinePage + delta;
+        if (p < 0) p = 0;
+        if (p > tp - 1) p = tp - 1;
+        onlinePage = p;
+        renderOnlineList();
+    }
+
+    async function openOnline(force) {
+        onlineOpen = true;
+        if (mainBox) mainBox.style.display = 'none';
+        if (onlineBox) onlineBox.style.display = '';
+        setStatus(t('loading'));
+        try {
+            onlineData = await fetchRepoList(force);
+            onlinePage = 0;
+            renderOnlineList();
+            setStatus((uiLang === 'zh' ? '共 ' : 'Total ') + onlineData.length + ' 条');
+        } catch (e) {
+            clearOnlineList();
+            const err = document.createElement('div');
+            err.style.cssText = 'color:#e57373;font-size:12px;padding:6px 0;';
+            err.textContent = t('loadFail');
+            if (onlineListEl) onlineListEl.appendChild(err);
+            setStatus(t('loadFail'));
+        }
+    }
+
+    function closeOnline() {
+        onlineOpen = false;
+        if (onlineBox) onlineBox.style.display = 'none';
+        if (mainBox) mainBox.style.display = '';
+    }
+
+    // 打开页面时按视频 id 自动匹配并加载（无匹配则不强求）
+    async function autoLoadOnline() {
+        if (autoLoadTried) return;
+        if (!video) return;
+        autoLoadTried = true;
+        currentVideoId = videoIdFromUrl();
+        if (!currentVideoId) return;
+        try {
+            const list = await fetchRepoList(false);
+            const hit = list.find(function (e) { return String(e.id) === currentVideoId; });
+            if (hit) {
+                autoLoadedId = currentVideoId;
+                await loadSubtitleById(hit.id);
+                setStatus(t('loaded') + (hit.title || hit.id));
+            }
+        } catch (e) {}
     }
 
     // ------------------------------ ASS
@@ -617,7 +915,10 @@
         document.addEventListener('fullscreenchange', onFullscreenChange);
         document.addEventListener('webkitfullscreenchange', onFullscreenChange);
         window.addEventListener('resize', onFullscreenChange);
-        setInterval(function () { if (!video || !document.body.contains(video)) video = findVideo(); }, 1500);
+        setInterval(function () {
+            if (!video || !document.body.contains(video)) video = findVideo();
+            autoLoadOnline();
+        }, 1500);
         requestAnimationFrame(tick);
         setStatus(video ? t('ready') : (uiLang === 'zh' ? '暂未找到 <video>，稍后自动重扫' : 'No <video> yet, re-scanning…'));
     }
