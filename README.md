@@ -36,8 +36,12 @@
    ```
 
 3. 装好后即可**自动更新**：脚本内置 `@updateURL`/`@downloadURL`，Tampermonkey 每天自动检查并更新，**以后无需手动复制粘贴**。
+   <img width="914" height="676" alt="image" src="https://github.com/user-attachments/assets/d33aab8c-7113-4f04-b974-736560f14405" />
+
 
 ### 使用
+<img width="291" height="366" alt="image" src="https://github.com/user-attachments/assets/85f784ca-5907-434d-a60f-7074ac02caec" />
+
 
 1. 在含 `<video>` 的页面，字幕面板出现在**右下角**。
 2. 选择面板语言（**中文 / English**）。
