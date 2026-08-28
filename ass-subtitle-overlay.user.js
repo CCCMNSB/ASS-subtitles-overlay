@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.27
+// @version      1.28
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -37,6 +37,7 @@
     // 读取上次保存的字幕库地址（GM 存储，跨网站全局）
     try { const s = GM_getValue('assp_repo', ''); if (s) subtitleRepo = s; } catch (e) {}
     let repoCache = { etag: null, data: null, ts: 0, repo: '' };  // 索引缓存 + ETag（按仓库区分）
+    let lastRefreshTs = 0;                                 // 上次强制刷新时间（用于 30s 限制）
     const repoThrottle = 30000;                         // 刷新节流(ms)
     let mainBox = null;                                 // 面板主控件容器
     let onlineBox = null;                               // 在线字幕列表容器
@@ -587,7 +588,9 @@
         if (!force && sameRepo && repoCache.data && (now - repoCache.ts) < repoThrottle) return repoCache.data;
         const headers = {};
         if (!force && sameRepo && repoCache.etag) headers['If-None-Match'] = repoCache.etag;
-        const res = await fetch(url, { headers, cache: 'no-store' });   // 强制拿最新索引，避免浏览器缓存旧 index
+        const fetchOpts = { headers };
+        if (force) fetchOpts.cache = 'reload';   // 仅在按"刷新"时绕过浏览器缓存；平时走浏览器缓存(max-age/ETag)
+        const res = await fetch(url, fetchOpts);
         if (res.status === 304 && sameRepo && repoCache.data) { repoCache.ts = now; return repoCache.data; }
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
@@ -736,6 +739,13 @@
     }
 
     async function openOnline(force) {
+        if (force) {
+            if (Date.now() - lastRefreshTs < repoThrottle) {
+                setStatus(uiLang === 'zh' ? '刷新太频繁，30 秒后再试' : 'Refresh too often, wait 30s');
+                return;   // 30s 内不再强制刷新（列表保持现状）
+            }
+            lastRefreshTs = Date.now();
+        }
         onlineOpen = true;
         if (mainBox) mainBox.style.display = 'none';
         if (onlineBox) onlineBox.style.display = '';
