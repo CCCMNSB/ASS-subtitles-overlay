@@ -88,14 +88,13 @@
 - **Multiple speakers rendered simultaneously** — every active event in the current time range is drawn at once.
 - **Keeps ASS colors** — text uses the ASS `PrimaryColour`, the border uses `OutlineColour`, per speaker.
 - **Keeps ASS positions** — respects `\pos` and each style's alignment / vertical margins.
-- **Bilingual panel (中文 / English)** — the panel's own text switches language; this is independent of the subtitle content.
+- **Keeps ASS opaque background** — supports a black opaque background box.
 - **Draggable panel** — drag it anywhere; all buttons still work.
-- **Fullscreen-safe** — subtitles follow the video into fullscreen and render below the player's controls, so the progress bar stays clickable.
 
 ### Installation
 
 1. Install a userscript manager — [Tampermonkey](https://www.tampermonkey.net/) (Chrome / Edge / Firefox) or [Violentmonkey](https://violentmonkey.github.io/).
-2. Install the script from the raw link below (or create a new script and paste the contents of [`ass-subtitle-overlay.user.js`](./ass-subtitle-overlay.user.js)).
+2. Install the script from the **raw** link below (via the manager's **Install from URL** — `Tools → Install from URL` — or create a new script and paste the contents of [`ass-subtitle-overlay.user.js`](./ass-subtitle-overlay.user.js), or download it to load locally).
 
    ```
    https://raw.githubusercontent.com/CCCMNSB/ASS-subtitles-overlay/main/ass-subtitle-overlay.user.js
