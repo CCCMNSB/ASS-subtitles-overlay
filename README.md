@@ -126,7 +126,7 @@
 - **Click ▶** to **open the video and auto-jump to that subtitle's start time** (via a `t=seconds` link — reliable).
 - On a video page it **auto-matches the video ID** to the library and loads the subtitle (silently skips if no match).
 - The library URL is configurable in **Settings** (can switch to the **jsDelivr CDN**).
-- The index uses **ETag caching** plus a **30s refresh throttle**.
+- The index revalidates with the server (**304 when unchanged**, low load); the **Refresh** button forces the latest.
 
 ### Shortcut
 
