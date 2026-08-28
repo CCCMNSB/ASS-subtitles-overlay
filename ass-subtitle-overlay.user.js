@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.19
+// @version      1.20
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -72,6 +72,11 @@
         if (setRefs.offInput) setRefs.offInput.value = '0';
         if (setRefs.offVal) setRefs.offVal.textContent = '0%';
         if (setRefs.bgCheck) setRefs.bgCheck.checked = true;
+        // 恢复字幕库默认（你的仓库），并清缓存
+        subtitleRepo = DEFAULT_REPO;
+        if (setRefs.repoInput) setRefs.repoInput.value = subtitleRepo;
+        try { GM_setValue('assp_repo', subtitleRepo); } catch (e) {}
+        repoCache = { etag: null, data: null, ts: 0 };
         invalidate();
     }
 
@@ -250,6 +255,7 @@
         repoInput.addEventListener('input', function () {
             subtitleRepo = repoInput.value.trim() || DEFAULT_REPO;
             try { GM_setValue('assp_repo', subtitleRepo); } catch (e) {}
+            repoCache = { etag: null, data: null, ts: 0 };   // 仓库改了 → 作废旧缓存，下次立即拉新仓库
         });
         r.row.appendChild(repoInput);
         box.appendChild(r.row);
