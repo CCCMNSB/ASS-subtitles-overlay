@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.16
+// @version      1.17
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -306,6 +306,12 @@
         bLoad.style.width = '100%';
         mainBox.appendChild(bLoad);
 
+        // 在线字幕按钮（放本地字幕正下方）
+        const bOnline = mkBtn('', '#0d47a1', function () { openOnline(false); });
+        bOnline.style.width = '100%';
+        bOnline.style.marginTop = '8px';
+        mainBox.appendChild(bOnline);
+
         // 两个按钮并排
         const rowwrap = document.createElement('div');
         rowwrap.style.cssText = 'display:flex;gap:8px;margin-top:8px;';
@@ -323,12 +329,6 @@
         rowwrap.appendChild(bToggle);
         rowwrap.appendChild(bRebind);
         mainBox.appendChild(rowwrap);
-
-        // 在线字幕按钮
-        const bOnline = mkBtn('', '#0d47a1', function () { openOnline(false); });
-        bOnline.style.width = '100%';
-        bOnline.style.marginTop = '8px';
-        mainBox.appendChild(bOnline);
 
         // 设置按钮 + 设置面板
         const bSettings = mkBtn('', '#8e24aa', function () {
