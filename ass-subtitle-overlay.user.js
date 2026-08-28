@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.21
+// @version      1.22
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -36,7 +36,7 @@
     let subtitleRepo = DEFAULT_REPO;                    // 字幕库地址（可在设置里改）
     // 读取上次保存的字幕库地址（GM 存储，跨网站全局）
     try { const s = GM_getValue('assp_repo', ''); if (s) subtitleRepo = s; } catch (e) {}
-    let repoCache = { etag: null, data: null, ts: 0 };  // 索引缓存 + ETag
+    let repoCache = { etag: null, data: null, ts: 0, repo: '' };  // 索引缓存 + ETag（按仓库区分）
     const repoThrottle = 30000;                         // 刷新节流(ms)
     let mainBox = null;                                 // 面板主控件容器
     let onlineBox = null;                               // 在线字幕列表容器
@@ -70,8 +70,7 @@
         if (setRefs.sizeVal) setRefs.sizeVal.textContent = '75%';
         if (setRefs.bdInput) setRefs.bdInput.value = '0';
         if (setRefs.bdVal) setRefs.bdVal.textContent = '0px';
-        if (setRefs.fontSel) setRefs.fontSel.value = 'auto';
-        if (setRefs.fontCustom) setRefs.fontCustom.value = '';
+        if (setRefs.fontSel) setRefs.fontSel.value = '';
         try { GM_setValue('assp_font', 'auto'); } catch (e) {}
         if (setRefs.offInput) setRefs.offInput.value = '0';
         if (setRefs.offVal) setRefs.offVal.textContent = '0%';
@@ -85,8 +84,8 @@
     }
 
     const I18N = {
-        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件', settingsBtn: '设置', fontsize: '字号', border: '边框', font: '字体', offset: '上下偏移', assbg: 'ASS 背景', auto: '默认（跟随字幕）', fontCustom: '或自定义字体名…', reset: '恢复默认', online: '在线字幕', refresh: '刷新', back: '返回', search: '搜索标题/ID', loading: '加载中…', none: '未找到匹配的字幕', loadFail: '加载失败', repo: '字幕库', loaded: '已加载在线字幕：', prev: '上一页', next: '下一页', play: '打开视频', jump: '跳到该字幕开始', openTime: '打开视频并跳到该时间', jumpErr: '无法跳转' },
-        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file', settingsBtn: 'Settings', fontsize: 'Font size', border: 'Border', font: 'Font', offset: 'Up/Down', assbg: 'ASS bg', auto: 'Auto (follow subtitle)', fontCustom: 'or custom font name…', reset: 'Reset', online: 'Online', refresh: 'Refresh', back: 'Back', search: 'Search title/ID', loading: 'Loading…', none: 'No match', loadFail: 'Load failed', repo: 'Repo', loaded: 'Loaded online: ', prev: '‹ Prev', next: 'Next ›', play: 'Play video', jump: 'Jump to start', openTime: 'Open video at this time', jumpErr: 'Cannot seek' }
+        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件', settingsBtn: '设置', fontsize: '字号', border: '边框', font: '字体', offset: '上下偏移', assbg: 'ASS 背景', auto: '默认（跟随字幕）', fontCustom: '或自定义字体名…', fontPlaceholder: '输入字体名，或从建议里选', reset: '恢复默认', online: '在线字幕', refresh: '刷新', back: '返回', search: '搜索标题/ID', loading: '加载中…', none: '未找到匹配的字幕', loadFail: '加载失败', repo: '字幕库', loaded: '已加载在线字幕：', prev: '上一页', next: '下一页', play: '打开视频', jump: '跳到该字幕开始', openTime: '打开视频并跳到该时间', jumpErr: '无法跳转' },
+        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file', settingsBtn: 'Settings', fontsize: 'Font size', border: 'Border', font: 'Font', offset: 'Up/Down', assbg: 'ASS bg', auto: 'Auto (follow subtitle)', fontCustom: 'or custom font name…', fontPlaceholder: 'Type a font name, or pick from suggestions', reset: 'Reset', online: 'Online', refresh: 'Refresh', back: 'Back', search: 'Search title/ID', loading: 'Loading…', none: 'No match', loadFail: 'Load failed', repo: 'Repo', loaded: 'Loaded online: ', prev: '‹ Prev', next: 'Next ›', play: 'Play video', jump: 'Jump to start', openTime: 'Open video at this time', jumpErr: 'Cannot seek' }
     };
     function t(key) { return I18N[uiLang][key]; }
     function applyLang() {
@@ -106,8 +105,7 @@
         if (setRefs.offsetLabel) setRefs.offsetLabel.textContent = t('offset');
         if (setRefs.assbgLabel) setRefs.assbgLabel.textContent = t('assbg');
         if (setRefs.repoLabel) setRefs.repoLabel.textContent = t('repo');
-        if (setRefs.fontSel) setRefs.fontSel.options[0].textContent = t('auto');
-        if (setRefs.fontCustom) setRefs.fontCustom.placeholder = t('fontCustom');
+        if (setRefs.fontSel) setRefs.fontSel.placeholder = t('fontPlaceholder');
         // 在线字幕界面标签
         if (onlineRefs.bBack) onlineRefs.bBack.textContent = t('back');
         if (onlineRefs.oTitle) onlineRefs.oTitle.textContent = t('online');
@@ -239,28 +237,34 @@
         box.appendChild(r.row);
         setRefs.borderLabel = r.label; setRefs.bdVal = bdVal; setRefs.bdInput = bdInput;
 
-        // 字体（列出本机检测到的字体 + 可自定义）
+        // 字体（文本框 + 建议下拉：既能输入已知字体名，也能从检测到的字体里选）
         r = mkRow(t('font'));
-        const fontSel = document.createElement('select');
-        fontSel.style.cssText = 'flex:1;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;';
-        const fontCand = [['auto', t('auto')]].concat(detectFonts().map(function (f) { return [f, f]; })).concat([['sans-serif', 'sans-serif']]);
-        fontCand.forEach(function (o) { const op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; fontSel.appendChild(op); });
-        const fontCustom = document.createElement('input');
-        fontCustom.type = 'text';
-        fontCustom.placeholder = t('fontCustom');
-        fontCustom.style.cssText = 'width:100%;margin-top:-2px;margin-bottom:8px;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;box-sizing:border-box;';
+        const fontInput = document.createElement('input');
+        fontInput.type = 'text';
+        fontInput.placeholder = t('fontPlaceholder');
+        fontInput.style.cssText = 'flex:1;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;';
+        const dl = document.createElement('datalist');
+        dl.id = 'assp-fontlist';
+        detectFonts().forEach(function (f) { const op = document.createElement('option'); op.value = f; dl.appendChild(op); });
+        ['sans-serif', 'serif', 'monospace'].forEach(function (f) { const op = document.createElement('option'); op.value = f; dl.appendChild(op); });
+        fontInput.setAttribute('list', dl.id);
+        document.body.appendChild(dl);
+        // 容错：去掉会破坏 CSS 的字符、限长；空的回退到 auto（跟随字幕）
+        function sanitizeFont(v) { return String(v || '').replace(/["',;\n]/g, '').trim().slice(0, 60); }
+        function persistFont() { try { GM_setValue('assp_font', settings.font); } catch (e) {} }
+        fontInput.value = (settings.font && settings.font !== 'auto') ? settings.font : '';
         function applyFontUI() {
-            const inList = fontCand.some(function (o) { return o[0] === settings.font; });
-            fontSel.value = inList ? settings.font : 'auto';
-            fontCustom.value = inList ? '' : settings.font;
+            if (settings.font && settings.font !== 'auto') fontInput.value = settings.font;
         }
-        fontSel.addEventListener('change', function () { settings.font = fontSel.value; if (fontSel.value !== '__custom__') invalidate(); persistFont(); });
-        fontCustom.addEventListener('input', function () { settings.font = fontCustom.value.trim() || 'auto'; invalidate(); persistFont(); });
-        applyFontUI();
-        r.row.appendChild(fontSel);
+        fontInput.addEventListener('input', function () {
+            const s = sanitizeFont(fontInput.value);
+            settings.font = s || 'auto';
+            invalidate();
+            persistFont();
+        });
+        r.row.appendChild(fontInput);
         box.appendChild(r.row);
-        box.appendChild(fontCustom);
-        setRefs.fontLabel = r.label; setRefs.fontSel = fontSel; setRefs.fontCustom = fontCustom;
+        setRefs.fontLabel = r.label; setRefs.fontSel = fontInput; setRefs.fontCustom = null;
         function persistFont() { try { GM_setValue('assp_font', settings.font); } catch (e) {} }
 
         // 上下偏移（按视频高度的百分比）
@@ -511,18 +515,20 @@
         return null;
     }
 
-    // 拉取 index/index.json，带 ETag 缓存 + 30s 更新节流
+    // 拉取 index/index.json，带 ETag 缓存 + 30s 更新节流；缓存按仓库地址区分，改仓库自动失效
     async function fetchRepoList(force) {
         const url = repoBase() + '/index/index.json';
         const now = Date.now();
-        if (!force && repoCache.data && (now - repoCache.ts) < repoThrottle) return repoCache.data;
+        const sameRepo = repoCache.repo === subtitleRepo;
+        if (!force && sameRepo && repoCache.data && (now - repoCache.ts) < repoThrottle) return repoCache.data;
         const headers = {};
-        if (!force && repoCache.etag) headers['If-None-Match'] = repoCache.etag;
+        if (!force && sameRepo && repoCache.etag) headers['If-None-Match'] = repoCache.etag;
         const res = await fetch(url, { headers });
-        if (res.status === 304 && repoCache.data) { repoCache.ts = now; return repoCache.data; }
+        if (res.status === 304 && sameRepo && repoCache.data) { repoCache.ts = now; return repoCache.data; }
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         repoCache.etag = res.headers.get('ETag') || null;
+        repoCache.repo = subtitleRepo;
         repoCache.data = data;
         repoCache.ts = now;
         return data;
