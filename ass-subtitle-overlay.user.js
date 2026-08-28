@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.18
+// @version      1.19
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
 // @run-at       document-idle
-// @grant        none
+// @grant        GM_setValue
+// @grant        GM_getValue
 // @noframes
 // @updateURL    https://raw.githubusercontent.com/CCCMNSB/ASS-subtitles-overlay/main/ass-subtitle-overlay.user.js
 // @downloadURL  https://raw.githubusercontent.com/CCCMNSB/ASS-subtitles-overlay/main/ass-subtitle-overlay.user.js
@@ -33,8 +34,8 @@
     // ---- 在线字幕库（GitHub 仓库）----
     const DEFAULT_REPO = 'https://raw.githubusercontent.com/CCCMNSB/subtitles/main';
     let subtitleRepo = DEFAULT_REPO;                    // 字幕库地址（可在设置里改）
-    // 读取上次保存的字幕库地址（localStorage，@grant none 下可用）
-    try { const s = localStorage.getItem('assp_repo'); if (s) subtitleRepo = s; } catch (e) {}
+    // 读取上次保存的字幕库地址（GM 存储，跨网站全局）
+    try { const s = GM_getValue('assp_repo', ''); if (s) subtitleRepo = s; } catch (e) {}
     let repoCache = { etag: null, data: null, ts: 0 };  // 索引缓存 + ETag
     const repoThrottle = 30000;                         // 刷新节流(ms)
     let mainBox = null;                                 // 面板主控件容器
@@ -120,14 +121,18 @@
 
     function setStatus(msg) { if (statusEl) statusEl.textContent = msg; }
     let panelVisible = true;      // 用户希望的面板可见性（≠ 全屏临时的隐藏）
+    // 读取上次保存的面板显隐（GM 存储，跨网站全局；未保存默认显示）
+    try { panelVisible = GM_getValue('assp_panel', '1') !== '0'; } catch (e) {}
+    function persistPanel() { try { GM_setValue('assp_panel', panelVisible ? '1' : '0'); } catch (e) {} }
     let fsState = false;          // 当前是否全屏（用于只响应状态变化）
     function setPanelDisplay(show) { if (panel) panel.style.display = show ? 'block' : 'none'; }
-    function hideUi() { panelVisible = false; setPanelDisplay(false); }
-    function showUi() { panelVisible = true; setPanelDisplay(true); }
+    function hideUi() { panelVisible = false; setPanelDisplay(false); persistPanel(); }
+    function showUi() { panelVisible = true; setPanelDisplay(true); persistPanel(); }
     function togglePanel() {
         if (!panel) return;
         panelVisible = !panelVisible;
         setPanelDisplay(panelVisible);
+        persistPanel();
     }
     // 全屏：进入→临时隐藏；退出→按用户意图恢复。用事件（fullscreen + resize）驱动，兼容 B站/YouTube。
     function isFullscreen() {
@@ -244,7 +249,7 @@
         repoInput.style.cssText = 'flex:1;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;';
         repoInput.addEventListener('input', function () {
             subtitleRepo = repoInput.value.trim() || DEFAULT_REPO;
-            try { localStorage.setItem('assp_repo', subtitleRepo); } catch (e) {}
+            try { GM_setValue('assp_repo', subtitleRepo); } catch (e) {}
         });
         r.row.appendChild(repoInput);
         box.appendChild(r.row);
@@ -908,6 +913,7 @@
     function boot() {
         if (!document.body) { setTimeout(boot, 200); return; }
         buildUI();
+        setPanelDisplay(panelVisible);   // 应用上次记住的面板显隐
         video = findVideo();
         ensureOverlay();
         // Alt+A: 显示/隐藏字幕面板
