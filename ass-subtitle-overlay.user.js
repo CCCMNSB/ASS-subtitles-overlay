@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.31
+// @version      1.32
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -608,29 +608,15 @@
         return null;
     }
 
-    // 拉取 index/index.json，带 ETag 缓存 + 304 条件请求（没变就 304 空回应，低压力）
+    // 拉取 index/index.json：始终 no-store（每次都拿最新，避免浏览器/协议缓存导致不实时）
     async function fetchRepoList(force) {
-        let url = repoBase() + '/index/index.json';
-        const now = Date.now();
-        const sameRepo = repoCache.repo === subtitleRepo;
-        let fetchOpts;
-        if (force) {
-            // 刷新：加时间戳绕过 GitHub CDN 的 max-age 缓存，保证拿到最新
-            url += (url.indexOf('?') >= 0 ? '&' : '?') + '_=' + now;
-            fetchOpts = { headers: {}, cache: 'no-store' };
-        } else {
-            const headers = {};
-            if (sameRepo && repoCache.etag) headers['If-None-Match'] = repoCache.etag;
-            fetchOpts = { headers, cache: 'no-cache' };
-        }
-        const res = await fetch(url, fetchOpts);
-        if (res.status === 304 && sameRepo && repoCache.data) { repoCache.ts = now; return repoCache.data; }
+        const url = repoBase() + '/index/index.json';
+        const res = await fetch(url, { cache: 'no-store' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
-        repoCache.etag = res.headers.get('ETag') || null;
         repoCache.repo = subtitleRepo;
         repoCache.data = data;
-        repoCache.ts = now;
+        repoCache.ts = Date.now();
         return data;
     }
 
@@ -709,11 +695,12 @@
 
     // ---------- 在线字幕列表渲染（分页）----------
     function clearOnlineList() { while (onlineListEl && onlineListEl.firstChild) onlineListEl.removeChild(onlineListEl.firstChild); }
+    function dateKey(d) { var s = String(d || ''); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '0000-00-00'; }
     function getFilteredList() {
         const q = (onlineSearch ? onlineSearch.value : '').trim().toLowerCase();
         return onlineData.slice()
             .filter(function (e) { return !q || (String(e.id) + ' ' + String(e.title || '')).toLowerCase().indexOf(q) >= 0; })
-            .sort(function (a, b) { return String(b.date || '') < String(a.date || '') ? -1 : 1; });
+            .sort(function (a, b) { var da = dateKey(a.date), db = dateKey(b.date); return db < da ? -1 : db > da ? 1 : 0; });
     }
     function pageTotal(list) { return Math.max(1, Math.ceil(list.length / ONLINE_PAGE)); }
     function pageText(p, tp, n) {
