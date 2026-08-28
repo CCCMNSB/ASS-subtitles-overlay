@@ -26,7 +26,7 @@
    https://raw.githubusercontent.com/CCCMNSB/ASS-subtitles-overlay/main/ass-subtitle-overlay.user.js
    ```
 
-3. 装好后即可**自动更新**：脚本内置 `@updateURL`/`@downloadURL`，Tampermonkey 每天自动检查并更新，**以后无需手动复制粘贴**。
+3. 装好后刷新页面即可出现，可通过Alt+A快捷键快速呼出或隐藏。可随时通过篡改猴激活或者关闭该插件。
    <img width="914" height="676" alt="image" src="https://github.com/user-attachments/assets/d33aab8c-7113-4f04-b974-736560f14405" />
 
    ### 功能
