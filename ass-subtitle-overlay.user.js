@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.8
+// @version      1.9
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -21,6 +21,7 @@
     let rafId = 0;
     let lastTime = -1;
     let currentSource = '';
+    let playResW = 1920, playResH = 1080;   // 脚本播放分辨率，供 \pos 定位
     let uiLang = 'zh';               // 'zh' | 'en'（界面语言）
     let statusEl = null;
     const uiRefs = {};               // 界面上需要随语言切换的文字元素
@@ -324,7 +325,7 @@
 
     // ------------------------------ ASS
     function parseASS(text) {
-        let playResY = 1080;
+        playResW = 1920; playResH = 1080;
         const styles = {};
         let section = '';
         let fmt = null;
@@ -333,14 +334,15 @@
             const line = raw.trim();
             if (!line) continue;
             if (/^\[.*\]$/.test(line)) { section = line.slice(1, -1); continue; }
-            if (line.startsWith('PlayResY:')) { const v = parseInt(line.slice(9)); if (v > 0) playResY = v; }
+            if (line.startsWith('PlayResX:')) { const v = parseInt(line.slice(9)); if (v > 0) playResW = v; }
+            else if (line.startsWith('PlayResY:')) { const v = parseInt(line.slice(9)); if (v > 0) playResH = v; }
             else if (section === 'V4+ Styles' && line.startsWith('Style:')) {
-                const s = parseStyle(line, playResY);
+                const s = parseStyle(line, playResH);
                 if (s) styles[s.name] = s;
             } else if (section === 'Events' && line.startsWith('Format:')) {
                 fmt = line.slice(7).split(',').map(function (s) { return s.trim(); });
             } else if (section === 'Events' && line.startsWith('Dialogue:')) {
-                const d = parseDialogue(line, fmt, styles, playResY);
+                const d = parseDialogue(line, fmt, styles, playResW, playResH);
                 if (d) out.push(d);
             }
         }
@@ -363,7 +365,7 @@
             marginV: parseInt(p[21]) || 10
         };
     }
-    function parseDialogue(line, fmt, styles, playResY) {
+    function parseDialogue(line, fmt, styles, playResX, playResY) {
         if (!fmt) return null;
         const iS = fmt.indexOf('Start'), iE = fmt.indexOf('End'), iSt = fmt.indexOf('Style'), iT = fmt.indexOf('Text');
         const parts = line.slice(line.indexOf(':') + 1).split(',');
@@ -382,6 +384,7 @@
         let fontname = st ? st.fontname : '';
         let bold = st ? st.bold : true;
         let outlineW = st ? st.outlineW : 0.002;
+        let hasPos = false, posX = 0, posY = 0;
         let text = (iT >= 0 ? parts.slice(iT).join(',') : '').trim() || '';   // Text 是最后字段，需把含逗号的残留片段拼回
         const an = /\\an([1-9])/.exec(text);
         if (an) alignment = +an[1];
@@ -392,11 +395,12 @@
         const c4 = /\\4c&H([0-9a-fA-F]+)&/.exec(text);
         if (c4) backColour = c4[1];
         const pos = /\\pos\(([\d.]+),([\d.]+)\)/.exec(text);
-        if (pos) yFrac = +pos[2] / playResY;
+        if (pos) { hasPos = true; posX = +pos[1]; posY = +pos[2]; }
         text = text.replace(/\\[Nn]/g, '\n').replace(/\{[^}]*\}/g, '').trim();
         return { startMs: startMs, endMs: endMs, text: text, alignment: alignment, yFrac: yFrac,
             primary: primary, outline: outline, fontSize: fontSize, fontname: fontname,
-            bold: bold, outlineW: outlineW, backColour: backColour, borderStyle: borderStyle };
+            bold: bold, outlineW: outlineW, backColour: backColour, borderStyle: borderStyle,
+            hasPos: hasPos, posX: posX, posY: posY };
     }
     function tASS(t) {
         const m = /^(\d+):(\d\d):(\d\d)(?:\.(\d+))?$/.exec(t.trim());
@@ -504,10 +508,18 @@
             const blockH = lines.length * lineH;
             const mod = e.alignment % 3;
             let y;
-            if (e.alignment <= 3) y = Math.max(0, h * e.yFrac - blockH);
-            else if (e.alignment >= 7) y = Math.min(h - blockH, h * e.yFrac);
-            else y = h * e.yFrac - blockH / 2;
-            y = Math.max(0, Math.min(y, h - blockH));
+            if (e.hasPos) {
+                const yA = e.posY / playResH * h;   // \pos：垂直锚点（按对齐方式）
+                if (e.alignment <= 3) y = Math.max(0, yA - blockH);
+                else if (e.alignment >= 7) y = Math.min(h - blockH, yA);
+                else y = yA - blockH / 2;
+                y = Math.max(0, Math.min(y, h - blockH));
+            } else {
+                if (e.alignment <= 3) y = Math.max(0, h * e.yFrac - blockH);
+                else if (e.alignment >= 7) y = Math.min(h - blockH, h * e.yFrac);
+                else y = h * e.yFrac - blockH / 2;
+                y = Math.max(0, Math.min(y, h - blockH));
+            }
             const el = document.createElement('div');
             let stroke = Math.max(1.5, e.outlineW * h * 2);
             if (settings.borderPx > 0) stroke = Math.max(1.5, settings.borderPx);
@@ -528,16 +540,15 @@
                 + 'paint-order:stroke fill;';
             if (bg) css += 'background:' + assColorA(e.backColour) + ';padding:2px 6px;border-radius:2px;';
             const offPx = settings.offsetPct / 100 * h;   // 上下偏移（按视频高度）
-            // 对齐 + 上下偏移（用 transform 统一偏移）
             let transform;
-            if (mod === 2) {
-                if (bg) {
-                    css += 'left:50%;width:max-content;';
-                    transform = 'translate(calc(-50%), ' + offPx + 'px)';
-                } else {
-                    css += 'left:0;width:100%;text-align:center;';
-                    transform = 'translate(0,' + offPx + 'px)';
-                }
+            if (e.hasPos) {
+                const xA = e.posX / playResW * w;   // \pos：水平锚点（按对齐方式）
+                if (mod === 2) { css += 'left:' + xA + 'px;width:max-content;'; transform = 'translate(calc(-50%), ' + offPx + 'px)'; }
+                else if (mod === 1) { css += 'left:' + (xA - padX) + 'px;'; transform = 'translate(0,' + offPx + 'px)'; }
+                else { css += 'right:' + (w - xA - padX) + 'px;'; transform = 'translate(0,' + offPx + 'px)'; }
+            } else if (mod === 2) {
+                if (bg) { css += 'left:50%;width:max-content;'; transform = 'translate(calc(-50%), ' + offPx + 'px)'; }
+                else { css += 'left:0;width:100%;text-align:center;'; transform = 'translate(0,' + offPx + 'px)'; }
             } else if (mod === 1) {
                 css += 'left:' + (w * 0.03 - padX) + 'px;';
                 transform = 'translate(0,' + offPx + 'px)';
