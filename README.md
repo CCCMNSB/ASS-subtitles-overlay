@@ -116,6 +116,7 @@
 3. Click **Load Local Subtitle** and pick your `.ass` / `.ssa` / `.srt` file.
 4. Subtitles are drawn directly on the video, following playback.
 5. Use **Show / Hide** to toggle, **Re-bind Video** to re-attach to the video, and **×** to hide the panel (or press **Alt+A** to show/hide it).
+6. **Skip intro** — when you jump via the online subtitles, it auto-jumps to **near the first subtitle** line.
 
 ### Online Subtitles
 
