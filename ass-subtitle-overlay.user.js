@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.3
+// @version      1.4
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -24,10 +24,23 @@
     let uiLang = 'zh';               // 'zh' | 'en'（界面语言）
     let statusEl = null;
     const uiRefs = {};               // 界面上需要随语言切换的文字元素
+    const setRefs = {};              // 设置面板控件引用
+    let settingsBox = null;
+    let settingOpen = false;
+
+    // 用户可调设置
+    const settings = {
+        fontScale: 100,   // 字号（%），100=按 ASS 原样
+        borderPx: 0,      // 边框粗细（px），0=按 ASS 自动
+        font: 'auto',     // 'auto'=跟随字幕字体；否则用指定字体名
+        offsetX: 0,       // 位置偏移 X（px）
+        offsetY: 0,       // 位置偏移 Y（px）
+        assBg: true       // 是否渲染 ASS 不透明背景（BorderStyle=3）
+    };
 
     const I18N = {
-        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件' },
-        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file' }
+        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件', settingsBtn: '设置', fontsize: '字号', border: '边框', font: '字体', offset: '偏移', assbg: 'ASS 背景', auto: '默认（跟随字幕）', fontCustom: '或自定义字体名…' },
+        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file', settingsBtn: 'Settings', fontsize: 'Font size', border: 'Border', font: 'Font', offset: 'Offset', assbg: 'ASS bg', auto: 'Auto (follow subtitle)', fontCustom: 'or custom font name…' }
     };
     function t(key) { return I18N[uiLang][key]; }
     function applyLang() {
@@ -38,6 +51,15 @@
         uiRefs.bLoad.textContent = t('load');
         uiRefs.bToggle.textContent = t('toggle');
         uiRefs.bRebind.textContent = t('rebind');
+        if (uiRefs.bSettings) uiRefs.bSettings.textContent = t('settingsBtn');
+        // 设置面板标签
+        if (setRefs.sizeLabel) setRefs.sizeLabel.textContent = t('fontsize');
+        if (setRefs.borderLabel) setRefs.borderLabel.textContent = t('border');
+        if (setRefs.fontLabel) setRefs.fontLabel.textContent = t('font');
+        if (setRefs.offsetLabel) setRefs.offsetLabel.textContent = t('offset');
+        if (setRefs.assbgLabel) setRefs.assbgLabel.textContent = t('assbg');
+        if (setRefs.fontSel) setRefs.fontSel.options[0].textContent = t('auto');
+        if (setRefs.fontCustom) setRefs.fontCustom.placeholder = t('fontCustom');
         // 高亮当前语言
         uiRefs.segZh.style.background = uiLang === 'zh' ? '#1e88e5' : 'transparent';
         uiRefs.segEn.style.background = uiLang === 'en' ? '#1e88e5' : 'transparent';
@@ -67,6 +89,99 @@
             + 'padding:9px 0;cursor:pointer;font-size:13px;font-family:inherit;';
         b.addEventListener('click', cb);
         return b;
+    }
+
+    function mkRow(labelText) {
+        const r = document.createElement('div');
+        r.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:8px;';
+        const l = document.createElement('span');
+        l.style.cssText = 'color:#aaa;width:58px;flex-shrink:0;';
+        l.textContent = labelText;
+        r.appendChild(l);
+        return { row: r, label: l };
+    }
+
+    function buildSettings() {
+        const box = document.createElement('div');
+        box.id = 'assp-settings';
+        box.style.cssText = 'margin-top:12px;border-top:1px solid #333;padding-top:10px;display:none;';
+
+        // 字号
+        let r = mkRow(t('fontsize'));
+        const sizeInput = document.createElement('input');
+        sizeInput.type = 'range'; sizeInput.min = '40'; sizeInput.max = '300'; sizeInput.step = '5'; sizeInput.value = settings.fontScale;
+        sizeInput.style.cssText = 'flex:1;';
+        const sizeVal = document.createElement('span');
+        sizeVal.style.cssText = 'color:#eee;width:46px;text-align:right;';
+        sizeVal.textContent = settings.fontScale + '%';
+        sizeInput.addEventListener('input', function () { settings.fontScale = +sizeInput.value; sizeVal.textContent = settings.fontScale + '%'; });
+        r.row.appendChild(sizeInput); r.row.appendChild(sizeVal);
+        box.appendChild(r.row);
+        setRefs.sizeLabel = r.label; setRefs.sizeVal = sizeVal;
+
+        // 边框
+        r = mkRow(t('border'));
+        const bdInput = document.createElement('input');
+        bdInput.type = 'range'; bdInput.min = '0'; bdInput.max = '20'; bdInput.step = '1'; bdInput.value = settings.borderPx;
+        bdInput.style.cssText = 'flex:1;';
+        const bdVal = document.createElement('span');
+        bdVal.style.cssText = 'color:#eee;width:46px;text-align:right;';
+        bdVal.textContent = settings.borderPx + 'px';
+        bdInput.addEventListener('input', function () { settings.borderPx = +bdInput.value; bdVal.textContent = settings.borderPx + 'px'; });
+        r.row.appendChild(bdInput); r.row.appendChild(bdVal);
+        box.appendChild(r.row);
+        setRefs.borderLabel = r.label; setRefs.bdVal = bdVal;
+
+        // 字体
+        r = mkRow(t('font'));
+        const fontSel = document.createElement('select');
+        fontSel.style.cssText = 'flex:1;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;';
+        [['auto', t('auto')], ['Noto Sans SC', 'Noto Sans SC'], ['Microsoft YaHei', 'Microsoft YaHei'], ['SimHei', 'SimHei'], ['sans-serif', 'sans-serif']].forEach(function (o) {
+            const op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; fontSel.appendChild(op);
+        });
+        fontSel.value = settings.font;
+        fontSel.addEventListener('change', function () { settings.font = fontSel.value; });
+        r.row.appendChild(fontSel);
+        box.appendChild(r.row);
+        setRefs.fontLabel = r.label; setRefs.fontSel = fontSel;
+
+        // 自定义字体名
+        const fontCustom = document.createElement('input');
+        fontCustom.type = 'text';
+        fontCustom.placeholder = t('fontCustom');
+        fontCustom.style.cssText = 'width:100%;margin-bottom:8px;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;box-sizing:border-box;';
+        fontCustom.addEventListener('input', function () { settings.font = fontCustom.value.trim() || 'auto'; });
+        box.appendChild(fontCustom);
+        setRefs.fontCustom = fontCustom;
+
+        // 偏移 X / Y
+        r = mkRow(t('offset'));
+        const offWrap = document.createElement('div');
+        offWrap.style.cssText = 'flex:1;display:flex;gap:6px;';
+        function offInput(which) {
+            const inp = document.createElement('input');
+            inp.type = 'number'; inp.value = which === 'x' ? settings.offsetX : settings.offsetY;
+            inp.style.cssText = 'flex:1;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;';
+            inp.addEventListener('input', function () { if (which === 'x') settings.offsetX = +inp.value || 0; else settings.offsetY = +inp.value || 0; });
+            return inp;
+        }
+        const xInp = offInput('x'), yInp = offInput('y');
+        offWrap.appendChild(xInp); offWrap.appendChild(yInp);
+        r.row.appendChild(offWrap);
+        box.appendChild(r.row);
+        setRefs.offsetLabel = r.label;
+
+        // ASS 背景
+        r = mkRow(t('assbg'));
+        const bgCheck = document.createElement('input');
+        bgCheck.type = 'checkbox'; bgCheck.checked = settings.assBg;
+        bgCheck.style.cssText = 'width:16px;height:16px;';
+        bgCheck.addEventListener('change', function () { settings.assBg = bgCheck.checked; });
+        r.row.appendChild(bgCheck);
+        box.appendChild(r.row);
+        setRefs.assbgLabel = r.label;
+
+        return box;
     }
 
     function buildUI() {
@@ -136,6 +251,17 @@
         rowwrap.appendChild(bRebind);
         panel.appendChild(rowwrap);
 
+        // 设置按钮 + 设置面板
+        const bSettings = mkBtn('', '#8e24aa', function () {
+            settingOpen = !settingOpen;
+            if (settingsBox) settingsBox.style.display = settingOpen ? '' : 'none';
+        });
+        bSettings.style.width = '100%';
+        bSettings.style.marginTop = '8px';
+        panel.appendChild(bSettings);
+        settingsBox = buildSettings();
+        panel.appendChild(settingsBox);
+
         // 状态
         statusEl = document.createElement('div');
         statusEl.style.cssText = 'margin-top:10px;color:#aaa;word-break:break-all;';
@@ -146,7 +272,7 @@
         // 拖动：按住面板空白处可移动（按钮/关闭仍能点击）
         let drag = null;
         panel.addEventListener('pointerdown', function (e) {
-            if (e.target.closest('button, input')) return;
+            if (e.target.closest('button, input, select')) return;
             const rect = panel.getBoundingClientRect();
             drag = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
             e.preventDefault();
@@ -163,6 +289,7 @@
         // 保存引用
         uiRefs.title = title; uiRefs.langLabel = langLabel; uiRefs.segZh = segZh; uiRefs.segEn = segEn;
         uiRefs.bLoad = bLoad; uiRefs.bToggle = bToggle; uiRefs.bRebind = bRebind;
+        uiRefs.bSettings = bSettings;
         applyLang();
         setStatus(t('ready'));
     }
@@ -222,7 +349,9 @@
             fontSize: (parseFloat(p[2]) || 40) / playResY,
             primary: assColor(p[3]),
             outline: assColor(p[5]),
+            backColour: (p[6] || '').trim(),      // &HAABBGGRR 背景色
             bold: parseInt(p[7]) === -1,
+            borderStyle: (parseInt(p[15]) === 3) ? 3 : 1,   // 3 = 不透明背景框
             outlineW: (parseInt(p[16]) || 2) / playResY,
             alignment: parseInt(p[18]) || 2,
             marginV: parseInt(p[21]) || 10
@@ -240,6 +369,8 @@
         let alignment = st ? st.alignment : 2;
         let primary = st ? st.primary : '#ffffff';
         let outline = st ? st.outline : '#000000';
+        let backColour = st ? st.backColour : '';
+        let borderStyle = st ? st.borderStyle : 1;
         let yFrac = st ? yFromMargin(st.alignment, st.marginV, playResY) : 0.9;
         let fontSize = st ? st.fontSize : 0.074;
         let fontname = st ? st.fontname : '';
@@ -252,12 +383,14 @@
         if (c1) primary = assColor(c1[1]);
         const c3 = /\\3c&H([0-9a-fA-F]+)&/.exec(text);
         if (c3) outline = assColor(c3[1]);
+        const c4 = /\\4c&H([0-9a-fA-F]+)&/.exec(text);
+        if (c4) backColour = c4[1];
         const pos = /\\pos\(([\d.]+),([\d.]+)\)/.exec(text);
         if (pos) yFrac = +pos[2] / playResY;
         text = text.replace(/\\[Nn]/g, '\n').replace(/\{[^}]*\}/g, '').trim();
         return { startMs: startMs, endMs: endMs, text: text, alignment: alignment, yFrac: yFrac,
             primary: primary, outline: outline, fontSize: fontSize, fontname: fontname,
-            bold: bold, outlineW: outlineW };
+            bold: bold, outlineW: outlineW, backColour: backColour, borderStyle: borderStyle };
     }
     function tASS(t) {
         const m = /^(\d+):(\d\d):(\d\d)(?:\.(\d+))?$/.exec(t.trim());
@@ -278,6 +411,17 @@
         const g = parseInt(hex.slice(4, 6), 16);
         const r = parseInt(hex.slice(6, 8), 16);
         return 'rgb(' + r + ',' + g + ',' + b + ')';
+    }
+    function assColorA(h) { // &HAABBGGRR -> 'rgba(r,g,b,a)'，含透明度
+        let hex = String(h || '').replace(/^&H/i, '').replace(/&$/, '');
+        hex = ('00' + hex).slice(-8);
+        while (hex.length < 8) hex = '00' + hex;
+        const a = parseInt(hex.slice(0, 2), 16);
+        const b = parseInt(hex.slice(2, 4), 16);
+        const g = parseInt(hex.slice(4, 6), 16);
+        const r = parseInt(hex.slice(6, 8), 16);
+        const alpha = Math.min(1, Math.max(0, Math.round((1 - a / 255) * 100) / 100));
+        return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
     }
 
     // ------------------------------ SRT
@@ -348,7 +492,7 @@
         if (!h || !w) return;
         for (const e of events) {
             if (now < e.startMs || now >= e.endMs) continue;
-            const size = Math.max(12, h * e.fontSize);
+            const size = Math.max(12, h * e.fontSize * (settings.fontScale / 100));
             const lineH = size * 1.25;
             const lines = e.text.split('\n');
             const blockH = lines.length * lineH;
@@ -359,9 +503,15 @@
             else y = h * e.yFrac - blockH / 2;
             y = Math.max(0, Math.min(y, h - blockH));
             const el = document.createElement('div');
-            const stroke = Math.max(1.5, e.outlineW * h * 2);
-            const fam = (e.fontname ? "'" + e.fontname + "'," : '')
-                + "'Noto Sans CJK SC','Noto Sans SC','Microsoft YaHei',sans-serif";
+            let stroke = Math.max(1.5, e.outlineW * h * 2);
+            if (settings.borderPx > 0) stroke = Math.max(1.5, settings.borderPx);
+            let fam;
+            if (settings.font && settings.font !== 'auto') {
+                fam = "'" + settings.font.replace(/'/g, '') + "','Noto Sans CJK SC','Noto Sans SC','Microsoft YaHei',sans-serif";
+            } else {
+                fam = (e.fontname ? "'" + e.fontname + "'," : '') + "'Noto Sans CJK SC','Noto Sans SC','Microsoft YaHei',sans-serif";
+            }
+            const bg = settings.assBg && e.borderStyle === 3 && e.backColour;
             let css = 'position:absolute;white-space:pre;color:' + e.primary
                 + ';font-size:' + size + 'px;'
                 + 'font-family:' + fam + ';'
@@ -369,9 +519,25 @@
                 + 'line-height:' + lineH + 'px;top:' + y + 'px;'
                 + '-webkit-text-stroke:' + stroke + 'px ' + e.outline + ';'
                 + 'paint-order:stroke fill;';
-            if (mod === 2) { css += 'left:0;width:100%;text-align:center;'; }
-            else if (mod === 1) { css += 'left:' + (w * 0.03) + 'px;'; }
-            else { css += 'right:' + (w * 0.03) + 'px;'; }
+            if (bg) css += 'background:' + assColorA(e.backColour) + ';padding:2px 6px;border-radius:2px;';
+            // 对齐 + 偏移（用 transform 统一偏移）
+            let transform;
+            if (mod === 2) {
+                if (bg) {
+                    css += 'left:50%;width:max-content;';
+                    transform = 'translate(calc(-50% + ' + settings.offsetX + 'px), ' + settings.offsetY + 'px)';
+                } else {
+                    css += 'left:0;width:100%;text-align:center;';
+                    transform = 'translate(' + settings.offsetX + 'px,' + settings.offsetY + 'px)';
+                }
+            } else if (mod === 1) {
+                css += 'left:' + (w * 0.03) + 'px;';
+                transform = 'translate(' + settings.offsetX + 'px,' + settings.offsetY + 'px)';
+            } else {
+                css += 'right:' + (w * 0.03) + 'px;';
+                transform = 'translate(' + settings.offsetX + 'px,' + settings.offsetY + 'px)';
+            }
+            css += 'transform:' + transform + ';';
             el.style.cssText = css;
             el.textContent = lines.join('\n');
             overlay.appendChild(el);
