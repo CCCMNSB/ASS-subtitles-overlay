@@ -26,7 +26,9 @@
    https://raw.githubusercontent.com/CCCMNSB/ASS-subtitles-overlay/main/ass-subtitle-overlay.user.js
    ```
 <img width="914" height="676" alt="image" src="https://github.com/user-attachments/assets/d33aab8c-7113-4f04-b974-736560f14405" />
+
 3. 装好后刷新页面即可出现，可通过Alt+A快捷键快速呼出或隐藏。可随时通过篡改猴激活或者关闭该插件。
+   
 <img width="409" height="328" alt="image" src="https://github.com/user-attachments/assets/006d7d87-a6d8-4469-a416-a0bce1c5fbbd" />
 
 
