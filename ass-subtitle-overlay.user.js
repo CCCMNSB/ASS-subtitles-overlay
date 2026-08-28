@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.30
+// @version      1.31
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -610,12 +610,19 @@
 
     // 拉取 index/index.json，带 ETag 缓存 + 304 条件请求（没变就 304 空回应，低压力）
     async function fetchRepoList(force) {
-        const url = repoBase() + '/index/index.json';
+        let url = repoBase() + '/index/index.json';
         const now = Date.now();
         const sameRepo = repoCache.repo === subtitleRepo;
-        const headers = {};
-        if (!force && sameRepo && repoCache.etag) headers['If-None-Match'] = repoCache.etag;
-        const fetchOpts = { headers, cache: force ? 'reload' : 'no-cache' };   // 平时 no-cache(304 复用)；刷新 reload 强拉
+        let fetchOpts;
+        if (force) {
+            // 刷新：加时间戳绕过 GitHub CDN 的 max-age 缓存，保证拿到最新
+            url += (url.indexOf('?') >= 0 ? '&' : '?') + '_=' + now;
+            fetchOpts = { headers: {}, cache: 'no-store' };
+        } else {
+            const headers = {};
+            if (sameRepo && repoCache.etag) headers['If-None-Match'] = repoCache.etag;
+            fetchOpts = { headers, cache: 'no-cache' };
+        }
         const res = await fetch(url, fetchOpts);
         if (res.status === 304 && sameRepo && repoCache.data) { repoCache.ts = now; return repoCache.data; }
         if (!res.ok) throw new Error('HTTP ' + res.status);
