@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.22
+// @version      1.23
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -70,7 +70,7 @@
         if (setRefs.sizeVal) setRefs.sizeVal.textContent = '75%';
         if (setRefs.bdInput) setRefs.bdInput.value = '0';
         if (setRefs.bdVal) setRefs.bdVal.textContent = '0px';
-        if (setRefs.fontSel) setRefs.fontSel.value = '';
+        if (setRefs.fontSel) { setRefs.fontSel.value = ''; setRefs.fontSel.placeholder = t('auto'); }
         try { GM_setValue('assp_font', 'auto'); } catch (e) {}
         if (setRefs.offInput) setRefs.offInput.value = '0';
         if (setRefs.offVal) setRefs.offVal.textContent = '0%';
@@ -105,7 +105,7 @@
         if (setRefs.offsetLabel) setRefs.offsetLabel.textContent = t('offset');
         if (setRefs.assbgLabel) setRefs.assbgLabel.textContent = t('assbg');
         if (setRefs.repoLabel) setRefs.repoLabel.textContent = t('repo');
-        if (setRefs.fontSel) setRefs.fontSel.placeholder = t('fontPlaceholder');
+        if (setRefs.fontSel) setRefs.fontSel.placeholder = (settings.font === 'auto') ? t('auto') : '';
         // 在线字幕界面标签
         if (onlineRefs.bBack) onlineRefs.bBack.textContent = t('back');
         if (onlineRefs.oTitle) onlineRefs.oTitle.textContent = t('online');
@@ -237,34 +237,73 @@
         box.appendChild(r.row);
         setRefs.borderLabel = r.label; setRefs.bdVal = bdVal; setRefs.bdInput = bdInput;
 
-        // 字体（文本框 + 建议下拉：既能输入已知字体名，也能从检测到的字体里选）
+        // 字体：可搜索下拉（combobox）——列出本机检测到的字体，点开可输入搜索，默认=跟随字幕
         r = mkRow(t('font'));
-        const fontInput = document.createElement('input');
-        fontInput.type = 'text';
-        fontInput.placeholder = t('fontPlaceholder');
-        fontInput.style.cssText = 'flex:1;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;';
-        const dl = document.createElement('datalist');
-        dl.id = 'assp-fontlist';
-        detectFonts().forEach(function (f) { const op = document.createElement('option'); op.value = f; dl.appendChild(op); });
-        ['sans-serif', 'serif', 'monospace'].forEach(function (f) { const op = document.createElement('option'); op.value = f; dl.appendChild(op); });
-        fontInput.setAttribute('list', dl.id);
-        document.body.appendChild(dl);
-        // 容错：去掉会破坏 CSS 的字符、限长；空的回退到 auto（跟随字幕）
-        function sanitizeFont(v) { return String(v || '').replace(/["',;\n]/g, '').trim().slice(0, 60); }
-        function persistFont() { try { GM_setValue('assp_font', settings.font); } catch (e) {} }
-        fontInput.value = (settings.font && settings.font !== 'auto') ? settings.font : '';
-        function applyFontUI() {
-            if (settings.font && settings.font !== 'auto') fontInput.value = settings.font;
+        const fcWrap = document.createElement('div');
+        fcWrap.style.cssText = 'position:relative;flex:1;';
+        const fcInput = document.createElement('input');
+        fcInput.type = 'text';
+        fcInput.autocomplete = 'off';
+        fcInput.spellcheck = false;
+        fcInput.style.cssText = 'width:100%;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;box-sizing:border-box;';
+        const fcList = document.createElement('div');
+        fcList.style.cssText = 'position:absolute;z-index:2147483601;left:0;right:0;top:calc(100% + 2px);background:#1e1e1e;border:1px solid #444;border-radius:6px;max-height:180px;overflow-y:auto;display:none;';
+        function fcOptions() {
+            return [{ v: 'auto', label: t('auto') }]
+                .concat(detectFonts().map(function (f) { return { v: f, label: f }; }))
+                .concat([{ v: 'sans-serif', label: 'sans-serif' }, { v: 'serif', label: 'serif' }, { v: 'monospace', label: 'monospace' }]);
         }
-        fontInput.addEventListener('input', function () {
-            const s = sanitizeFont(fontInput.value);
-            settings.font = s || 'auto';
-            invalidate();
-            persistFont();
+        const fontOptions = fcOptions();
+        function sanitizeFont(v) { return String(v || '').replace(/["',;\n]/g, '').trim().slice(0, 60); }
+        function fontLabel(v) { for (const o of fontOptions) if (o.v === v) return o.label; return v; }
+        function persistFont() { try { GM_setValue('assp_font', settings.font); } catch (e) {} }
+        function fcSelect(v) {
+            settings.font = sanitizeFont(v) || 'auto';
+            fcInput.value = settings.font === 'auto' ? '' : fontLabel(settings.font);
+            fcInput.placeholder = settings.font === 'auto' ? t('auto') : '';
+            invalidate(); persistFont(); fcList.style.display = 'none';
+        }
+        function fcRender(filter) {
+            fcList.textContent = '';
+            const q = (filter || '').toLowerCase();
+            const shown = fontOptions.filter(function (o) { return !q || o.label.toLowerCase().indexOf(q) >= 0; });
+            if (shown.length) {
+                shown.forEach(function (o) {
+                    const it = document.createElement('div');
+                    it.style.cssText = 'padding:6px 8px;color:#eee;font-size:12.5px;cursor:pointer;';
+                    if ((o.v === settings.font) || (settings.font === 'auto' && o.v === 'auto')) it.style.background = '#0d47a1';
+                    it.textContent = o.label;
+                    it.addEventListener('click', function (ev) { ev.stopPropagation(); fcSelect(o.v); });
+                    fcList.appendChild(it);
+                });
+            } else {
+                const l = document.createElement('div');
+                l.style.cssText = 'padding:6px 8px;color:#aaa;font-size:12px;cursor:pointer;';
+                l.textContent = '使用 "' + (filter || '') + '"';
+                l.addEventListener('click', function (ev) { ev.stopPropagation(); fcSelect(filter); });
+                fcList.appendChild(l);
+            }
+        }
+        function fcOpen() { fcList.style.display = ''; fcRender(fcInput.value); }
+        function fcClose() { fcList.style.display = 'none'; }
+        function fcInit() {
+            if (settings.font && settings.font !== 'auto') { fcInput.value = fontLabel(settings.font); fcInput.placeholder = ''; }
+            else { fcInput.value = ''; fcInput.placeholder = t('auto'); }
+        }
+        fcInput.addEventListener('click', fcOpen);
+        fcInput.addEventListener('focus', fcOpen);
+        fcInput.addEventListener('input', function () { fcRender(fcInput.value); fcList.style.display = ''; });
+        fcInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); fcSelect(fcInput.value.trim()); }
+            if (e.key === 'Escape') fcClose();
         });
-        r.row.appendChild(fontInput);
+        fcInput.addEventListener('blur', function () { setTimeout(fcClose, 150); });
+        document.addEventListener('click', function (e) { if (!fcWrap.contains(e.target)) fcClose(); });
+        fcWrap.appendChild(fcInput); fcWrap.appendChild(fcList);
+        r.row.appendChild(fcWrap);
         box.appendChild(r.row);
-        setRefs.fontLabel = r.label; setRefs.fontSel = fontInput; setRefs.fontCustom = null;
+        setRefs.fontLabel = r.label; setRefs.fontSel = fcInput; setRefs.fontCustom = null;
+        fcInit();
         function persistFont() { try { GM_setValue('assp_font', settings.font); } catch (e) {} }
 
         // 上下偏移（按视频高度的百分比）
