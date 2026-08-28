@@ -72,6 +72,13 @@
 - 底部对齐的字幕会限制在视频区域内，避免超出边界。
 - 需要脚本管理器（网站要求权限时请允许该脚本运行）。
 
+### 限制 / 暂不支持
+
+- **复杂 ASS 特效**：暂不支持 `\k`（卡拉OK）、`\move`、`\fad`、`\t()`、`\fr`（旋转）、`\clip` 等。这类字幕的**文字/颜色/位置仍基本正确**，但动画/填充/裁剪等效果会与 Aegisub 有出入。
+- **在线字幕 / 自动匹配**：主要面向 **YouTube（11 位 ID）** 和 **B站（BV 号）**。其它平台不自动匹配，需手动加载本地文件，或把「字幕库」指向你自己的（同结构）仓库。
+- **视频环境**：视频须为页面内的**真实 `<video>` 元素**；内嵌 iframe、DRM 受保护、或非 `<video>` 的自定义播放器可能**用不了**。
+- **字体**：检测的是常见字体；未检测到的可**输入字体名**手动使用。
+
 [English](#english) · [简体中文](#中文)
 
 ---
@@ -139,6 +146,13 @@
 - The overlay avoids the player's floating controls, so the progress bar stays fully clickable.
 - Bottom-anchored subtitles are clamped to stay inside the video area.
 - A userscript manager is required (allow the script to run when a site asks for permission).
+
+### Limitations / Not supported yet
+
+- **Advanced ASS effects**: `\k` (karaoke), `\move`, `\fad`, `\t()`, `\fr` (rotation), `\clip`, etc. are **not supported**. The **text / color / position still render correctly**, but animations, karaoke fills and clipping may differ from Aegisub.
+- **Online subtitles / auto-match**: mainly for **YouTube (11-char ID)** and **Bilibili (BV id)**. Other sites won't auto-match; load a local file, or point the **Subtitle Library** to your own (same-structured) repo.
+- **Video environment**: the video must be a real `<video>` element in the page. Embedded iframes, DRM-protected content, or custom non-`<video>` players may **not work**.
+- **Fonts**: it detects common fonts; for others, **type the font name** to use it.
 
 ---
 
