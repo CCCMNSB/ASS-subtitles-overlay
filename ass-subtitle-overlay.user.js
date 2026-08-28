@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.4
+// @version      1.5
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -33,14 +33,15 @@
         fontScale: 100,   // 字号（%），100=按 ASS 原样
         borderPx: 0,      // 边框粗细（px），0=按 ASS 自动
         font: 'auto',     // 'auto'=跟随字幕字体；否则用指定字体名
-        offsetX: 0,       // 位置偏移 X（px）
-        offsetY: 0,       // 位置偏移 Y（px）
+        offsetY: 0,       // 上下偏移（px，负数=上移）
         assBg: true       // 是否渲染 ASS 不透明背景（BorderStyle=3）
     };
+    // 实时生效：任何设置改动后把 lastTime 置回 -1，下一帧就重绘一次字幕
+    function invalidate() { lastTime = -1; }
 
     const I18N = {
-        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件', settingsBtn: '设置', fontsize: '字号', border: '边框', font: '字体', offset: '偏移', assbg: 'ASS 背景', auto: '默认（跟随字幕）', fontCustom: '或自定义字体名…' },
-        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file', settingsBtn: 'Settings', fontsize: 'Font size', border: 'Border', font: 'Font', offset: 'Offset', assbg: 'ASS bg', auto: 'Auto (follow subtitle)', fontCustom: 'or custom font name…' }
+        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件', settingsBtn: '设置', fontsize: '字号', border: '边框', font: '字体', offset: '上下偏移', assbg: 'ASS 背景', auto: '默认（跟随字幕）', fontCustom: '或自定义字体名…' },
+        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file', settingsBtn: 'Settings', fontsize: 'Font size', border: 'Border', font: 'Font', offset: 'Up/Down', assbg: 'ASS bg', auto: 'Auto (follow subtitle)', fontCustom: 'or custom font name…' }
     };
     function t(key) { return I18N[uiLang][key]; }
     function applyLang() {
@@ -114,7 +115,7 @@
         const sizeVal = document.createElement('span');
         sizeVal.style.cssText = 'color:#eee;width:46px;text-align:right;';
         sizeVal.textContent = settings.fontScale + '%';
-        sizeInput.addEventListener('input', function () { settings.fontScale = +sizeInput.value; sizeVal.textContent = settings.fontScale + '%'; });
+        sizeInput.addEventListener('input', function () { settings.fontScale = +sizeInput.value; sizeVal.textContent = settings.fontScale + '%'; invalidate(); });
         r.row.appendChild(sizeInput); r.row.appendChild(sizeVal);
         box.appendChild(r.row);
         setRefs.sizeLabel = r.label; setRefs.sizeVal = sizeVal;
@@ -127,7 +128,7 @@
         const bdVal = document.createElement('span');
         bdVal.style.cssText = 'color:#eee;width:46px;text-align:right;';
         bdVal.textContent = settings.borderPx + 'px';
-        bdInput.addEventListener('input', function () { settings.borderPx = +bdInput.value; bdVal.textContent = settings.borderPx + 'px'; });
+        bdInput.addEventListener('input', function () { settings.borderPx = +bdInput.value; bdVal.textContent = settings.borderPx + 'px'; invalidate(); });
         r.row.appendChild(bdInput); r.row.appendChild(bdVal);
         box.appendChild(r.row);
         setRefs.borderLabel = r.label; setRefs.bdVal = bdVal;
@@ -140,43 +141,30 @@
             const op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; fontSel.appendChild(op);
         });
         fontSel.value = settings.font;
-        fontSel.addEventListener('change', function () { settings.font = fontSel.value; });
+        fontSel.addEventListener('change', function () { settings.font = fontSel.value; invalidate(); });
         r.row.appendChild(fontSel);
         box.appendChild(r.row);
         setRefs.fontLabel = r.label; setRefs.fontSel = fontSel;
 
-        // 自定义字体名
-        const fontCustom = document.createElement('input');
-        fontCustom.type = 'text';
-        fontCustom.placeholder = t('fontCustom');
-        fontCustom.style.cssText = 'width:100%;margin-bottom:8px;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;box-sizing:border-box;';
-        fontCustom.addEventListener('input', function () { settings.font = fontCustom.value.trim() || 'auto'; });
-        box.appendChild(fontCustom);
-        setRefs.fontCustom = fontCustom;
-
-        // 偏移 X / Y
+        // 上下偏移（滑块）
         r = mkRow(t('offset'));
-        const offWrap = document.createElement('div');
-        offWrap.style.cssText = 'flex:1;display:flex;gap:6px;';
-        function offInput(which) {
-            const inp = document.createElement('input');
-            inp.type = 'number'; inp.value = which === 'x' ? settings.offsetX : settings.offsetY;
-            inp.style.cssText = 'flex:1;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;';
-            inp.addEventListener('input', function () { if (which === 'x') settings.offsetX = +inp.value || 0; else settings.offsetY = +inp.value || 0; });
-            return inp;
-        }
-        const xInp = offInput('x'), yInp = offInput('y');
-        offWrap.appendChild(xInp); offWrap.appendChild(yInp);
-        r.row.appendChild(offWrap);
+        const offInput = document.createElement('input');
+        offInput.type = 'range'; offInput.min = '-400'; offInput.max = '400'; offInput.step = '5'; offInput.value = settings.offsetY;
+        offInput.style.cssText = 'flex:1;';
+        const offVal = document.createElement('span');
+        offVal.style.cssText = 'color:#eee;width:56px;text-align:right;';
+        offVal.textContent = (settings.offsetY >= 0 ? '+' : '') + settings.offsetY + 'px';
+        offInput.addEventListener('input', function () { settings.offsetY = +offInput.value; offVal.textContent = (settings.offsetY >= 0 ? '+' : '') + settings.offsetY + 'px'; invalidate(); });
+        r.row.appendChild(offInput); r.row.appendChild(offVal);
         box.appendChild(r.row);
-        setRefs.offsetLabel = r.label;
+        setRefs.offsetLabel = r.label; setRefs.offVal = offVal;
 
         // ASS 背景
         r = mkRow(t('assbg'));
         const bgCheck = document.createElement('input');
         bgCheck.type = 'checkbox'; bgCheck.checked = settings.assBg;
         bgCheck.style.cssText = 'width:16px;height:16px;';
-        bgCheck.addEventListener('change', function () { settings.assBg = bgCheck.checked; });
+        bgCheck.addEventListener('change', function () { settings.assBg = bgCheck.checked; invalidate(); });
         r.row.appendChild(bgCheck);
         box.appendChild(r.row);
         setRefs.assbgLabel = r.label;
@@ -520,22 +508,22 @@
                 + '-webkit-text-stroke:' + stroke + 'px ' + e.outline + ';'
                 + 'paint-order:stroke fill;';
             if (bg) css += 'background:' + assColorA(e.backColour) + ';padding:2px 6px;border-radius:2px;';
-            // 对齐 + 偏移（用 transform 统一偏移）
+            // 对齐 + 上下偏移（用 transform 统一偏移）
             let transform;
             if (mod === 2) {
                 if (bg) {
                     css += 'left:50%;width:max-content;';
-                    transform = 'translate(calc(-50% + ' + settings.offsetX + 'px), ' + settings.offsetY + 'px)';
+                    transform = 'translate(calc(-50%), ' + settings.offsetY + 'px)';
                 } else {
                     css += 'left:0;width:100%;text-align:center;';
-                    transform = 'translate(' + settings.offsetX + 'px,' + settings.offsetY + 'px)';
+                    transform = 'translate(0,' + settings.offsetY + 'px)';
                 }
             } else if (mod === 1) {
                 css += 'left:' + (w * 0.03) + 'px;';
-                transform = 'translate(' + settings.offsetX + 'px,' + settings.offsetY + 'px)';
+                transform = 'translate(0,' + settings.offsetY + 'px)';
             } else {
                 css += 'right:' + (w * 0.03) + 'px;';
-                transform = 'translate(' + settings.offsetX + 'px,' + settings.offsetY + 'px)';
+                transform = 'translate(0,' + settings.offsetY + 'px)';
             }
             css += 'transform:' + transform + ';';
             el.style.cssText = css;
