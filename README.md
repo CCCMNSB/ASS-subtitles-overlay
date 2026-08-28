@@ -31,6 +31,8 @@
    
 <img width="409" height="328" alt="image" src="https://github.com/user-attachments/assets/006d7d87-a6d8-4469-a416-a0bce1c5fbbd" />
 
+4.地址栏输入 `chrome://extensions` → 找到你的脚本管理器（Tampermonkey / Violentmonkey）→ 在详情页打开 **「允许使用者指令码」**。
+
 
 ### 功能
 
