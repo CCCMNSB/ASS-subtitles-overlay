@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.29
+// @version      1.30
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -92,6 +92,7 @@
         if (setRefs.repoInput) setRefs.repoInput.value = subtitleRepo;
         try { GM_setValue('assp_repo', subtitleRepo); } catch (e) {}
         repoCache = { etag: null, data: null, ts: 0, repo: '' };
+        subTextCache = {};
         saveSetting('assp_fontScale', 55); saveSetting('assp_borderPx', 0); saveSetting('assp_offsetPct', 0); saveSetting('assp_assBg', '1'); saveSetting('assp_autoJump', '1');
         invalidate();
     }
@@ -390,6 +391,7 @@
             subtitleRepo = repoInput.value.trim() || DEFAULT_REPO;
             try { GM_setValue('assp_repo', subtitleRepo); } catch (e) {}
             repoCache = { etag: null, data: null, ts: 0 };   // 仓库改了 → 作废旧缓存，下次立即拉新仓库
+            subTextCache = {};
         });
         r.row.appendChild(repoInput);
         box.appendChild(r.row);
@@ -625,12 +627,20 @@
         return data;
     }
 
+    // 已加载字幕内容的内存缓存（key=仓库|id），避免反复点同一字幕反复下载
+    let subTextCache = {};
     // 拉取某个 id 的字幕文本（先试 .ass 再试 .srt）；返回文本或 null
     async function fetchSubtitleText(id) {
         const base = repoBase();
+        const key = base + '|' + id;
+        if (subTextCache[key]) return subTextCache[key];
         for (const ext of ['ass', 'srt']) {
             const r = await fetch(base + '/subtitles/' + encodeURIComponent(id) + '.' + ext, { cache: 'no-store' });
-            if (r.ok) return await r.text();
+            if (r.ok) {
+                const txt = await r.text();
+                subTextCache[key] = txt;
+                return txt;
+            }
         }
         return null;
     }
