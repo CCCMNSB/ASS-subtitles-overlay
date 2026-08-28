@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.24
+// @version      1.25
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -62,6 +62,12 @@
     };
     // 读取上次保存的字体选择（GM 存储，全局）
     try { const f = GM_getValue('assp_font', ''); if (f) settings.font = f; } catch (e) {}
+    // 读取其它设置（字号/边框/偏移/ASS背景）
+    function saveSetting(k, v) { try { GM_setValue(k, v); } catch (e) {} }
+    try { const n = GM_getValue('assp_fontScale', ''); if (n !== '') settings.fontScale = +n || 75; } catch (e) {}
+    try { const n = GM_getValue('assp_borderPx', ''); if (n !== '') settings.borderPx = +n || 0; } catch (e) {}
+    try { const n = GM_getValue('assp_offsetPct', ''); if (n !== '') settings.offsetPct = +n || 0; } catch (e) {}
+    try { const n = GM_getValue('assp_assBg', ''); if (n !== '') settings.assBg = n === '1'; } catch (e) {}
     // 实时生效：任何设置改动后把 lastTime 置回 -1，下一帧就重绘一次字幕
     function invalidate() { lastTime = -1; }
     function resetDefaults() {
@@ -80,7 +86,8 @@
         subtitleRepo = DEFAULT_REPO;
         if (setRefs.repoInput) setRefs.repoInput.value = subtitleRepo;
         try { GM_setValue('assp_repo', subtitleRepo); } catch (e) {}
-        repoCache = { etag: null, data: null, ts: 0 };
+        repoCache = { etag: null, data: null, ts: 0, repo: '' };
+        saveSetting('assp_fontScale', 75); saveSetting('assp_borderPx', 0); saveSetting('assp_offsetPct', 0); saveSetting('assp_assBg', '1');
         invalidate();
     }
 
@@ -221,7 +228,7 @@
         const sizeVal = document.createElement('span');
         sizeVal.style.cssText = 'color:#eee;width:46px;text-align:right;';
         sizeVal.textContent = settings.fontScale + '%';
-        sizeInput.addEventListener('input', function () { settings.fontScale = +sizeInput.value; sizeVal.textContent = settings.fontScale + '%'; invalidate(); });
+        sizeInput.addEventListener('input', function () { settings.fontScale = +sizeInput.value; sizeVal.textContent = settings.fontScale + '%'; invalidate(); saveSetting('assp_fontScale', settings.fontScale); });
         r.row.appendChild(sizeInput); r.row.appendChild(sizeVal);
         box.appendChild(r.row);
         setRefs.sizeLabel = r.label; setRefs.sizeVal = sizeVal; setRefs.sizeInput = sizeInput;
@@ -234,7 +241,7 @@
         const bdVal = document.createElement('span');
         bdVal.style.cssText = 'color:#eee;width:46px;text-align:right;';
         bdVal.textContent = settings.borderPx + 'px';
-        bdInput.addEventListener('input', function () { settings.borderPx = +bdInput.value; bdVal.textContent = settings.borderPx + 'px'; invalidate(); });
+        bdInput.addEventListener('input', function () { settings.borderPx = +bdInput.value; bdVal.textContent = settings.borderPx + 'px'; invalidate(); saveSetting('assp_borderPx', settings.borderPx); });
         r.row.appendChild(bdInput); r.row.appendChild(bdVal);
         box.appendChild(r.row);
         setRefs.borderLabel = r.label; setRefs.bdVal = bdVal; setRefs.bdInput = bdInput;
@@ -317,7 +324,7 @@
         const offVal = document.createElement('span');
         offVal.style.cssText = 'color:#eee;width:52px;text-align:right;';
         offVal.textContent = (settings.offsetPct >= 0 ? '+' : '') + settings.offsetPct + '%';
-        offInput.addEventListener('input', function () { settings.offsetPct = +offInput.value; offVal.textContent = (settings.offsetPct >= 0 ? '+' : '') + settings.offsetPct + '%'; invalidate(); });
+        offInput.addEventListener('input', function () { settings.offsetPct = +offInput.value; offVal.textContent = (settings.offsetPct >= 0 ? '+' : '') + settings.offsetPct + '%'; invalidate(); saveSetting('assp_offsetPct', settings.offsetPct); });
         r.row.appendChild(offInput); r.row.appendChild(offVal);
         box.appendChild(r.row);
         setRefs.offsetLabel = r.label; setRefs.offVal = offVal; setRefs.offInput = offInput;
@@ -327,7 +334,7 @@
         const bgCheck = document.createElement('input');
         bgCheck.type = 'checkbox'; bgCheck.checked = settings.assBg;
         bgCheck.style.cssText = 'width:16px;height:16px;';
-        bgCheck.addEventListener('change', function () { settings.assBg = bgCheck.checked; invalidate(); });
+        bgCheck.addEventListener('change', function () { settings.assBg = bgCheck.checked; invalidate(); saveSetting('assp_assBg', settings.assBg ? '1' : '0'); });
         r.row.appendChild(bgCheck);
         box.appendChild(r.row);
         setRefs.assbgLabel = r.label; setRefs.bgCheck = bgCheck;
