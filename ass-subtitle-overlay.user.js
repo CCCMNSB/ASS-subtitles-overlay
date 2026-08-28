@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.20
+// @version      1.21
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -60,6 +60,8 @@
         offsetPct: 0,     // 上下偏移（% of video height，负数=上移）
         assBg: true       // 是否渲染 ASS 不透明背景（BorderStyle=3）
     };
+    // 读取上次保存的字体选择（GM 存储，全局）
+    try { const f = GM_getValue('assp_font', ''); if (f) settings.font = f; } catch (e) {}
     // 实时生效：任何设置改动后把 lastTime 置回 -1，下一帧就重绘一次字幕
     function invalidate() { lastTime = -1; }
     function resetDefaults() {
@@ -69,6 +71,8 @@
         if (setRefs.bdInput) setRefs.bdInput.value = '0';
         if (setRefs.bdVal) setRefs.bdVal.textContent = '0px';
         if (setRefs.fontSel) setRefs.fontSel.value = 'auto';
+        if (setRefs.fontCustom) setRefs.fontCustom.value = '';
+        try { GM_setValue('assp_font', 'auto'); } catch (e) {}
         if (setRefs.offInput) setRefs.offInput.value = '0';
         if (setRefs.offVal) setRefs.offVal.textContent = '0%';
         if (setRefs.bgCheck) setRefs.bgCheck.checked = true;
@@ -180,6 +184,30 @@
         return { row: r, label: l };
     }
 
+    // 检测本机已安装的部分常见中/英文字体（canvas 测量宽度，最靠近"你电脑真的有"的清单）
+    function detectFonts() {
+        const candidates = [
+            'Microsoft YaHei', 'SimHei', 'SimSun', 'KaiTi', 'FangSong', 'STHeiti', 'STKaiti',
+            'Microsoft JhengHei', 'PingFang SC', 'Hiragino Sans GB', 'Source Han Sans SC',
+            'Source Han Sans CN', 'Noto Sans SC', 'Noto Sans CJK SC', 'WenQuanYi Micro Hei',
+            'Arial', 'Verdana', 'Tahoma', 'Georgia', 'Consolas'
+        ];
+        let ctx;
+        try { ctx = document.createElement('canvas').getContext('2d'); } catch (e) { return []; }
+        if (!ctx) return [];
+        const test = '测中文字体Mm';   // 中英混合，测字体差异
+        const out = [];
+        try {
+            ctx.font = '48px "__assp_definitely_missing_font__"';
+            const base = ctx.measureText(test).width;
+            for (const f of candidates) {
+                ctx.font = '48px "' + f + '"';
+                if (Math.abs(ctx.measureText(test).width - base) > 0.6) out.push(f);
+            }
+        } catch (e) {}
+        return out;
+    }
+
     function buildSettings() {
         const box = document.createElement('div');
         box.id = 'assp-settings';
@@ -211,18 +239,29 @@
         box.appendChild(r.row);
         setRefs.borderLabel = r.label; setRefs.bdVal = bdVal; setRefs.bdInput = bdInput;
 
-        // 字体
+        // 字体（列出本机检测到的字体 + 可自定义）
         r = mkRow(t('font'));
         const fontSel = document.createElement('select');
         fontSel.style.cssText = 'flex:1;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;';
-        [['auto', t('auto')], ['Noto Sans SC', 'Noto Sans SC'], ['Microsoft YaHei', 'Microsoft YaHei'], ['SimHei', 'SimHei'], ['sans-serif', 'sans-serif']].forEach(function (o) {
-            const op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; fontSel.appendChild(op);
-        });
-        fontSel.value = settings.font;
-        fontSel.addEventListener('change', function () { settings.font = fontSel.value; invalidate(); });
+        const fontCand = [['auto', t('auto')]].concat(detectFonts().map(function (f) { return [f, f]; })).concat([['sans-serif', 'sans-serif']]);
+        fontCand.forEach(function (o) { const op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; fontSel.appendChild(op); });
+        const fontCustom = document.createElement('input');
+        fontCustom.type = 'text';
+        fontCustom.placeholder = t('fontCustom');
+        fontCustom.style.cssText = 'width:100%;margin-top:-2px;margin-bottom:8px;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;box-sizing:border-box;';
+        function applyFontUI() {
+            const inList = fontCand.some(function (o) { return o[0] === settings.font; });
+            fontSel.value = inList ? settings.font : 'auto';
+            fontCustom.value = inList ? '' : settings.font;
+        }
+        fontSel.addEventListener('change', function () { settings.font = fontSel.value; if (fontSel.value !== '__custom__') invalidate(); persistFont(); });
+        fontCustom.addEventListener('input', function () { settings.font = fontCustom.value.trim() || 'auto'; invalidate(); persistFont(); });
+        applyFontUI();
         r.row.appendChild(fontSel);
         box.appendChild(r.row);
-        setRefs.fontLabel = r.label; setRefs.fontSel = fontSel;
+        box.appendChild(fontCustom);
+        setRefs.fontLabel = r.label; setRefs.fontSel = fontSel; setRefs.fontCustom = fontCustom;
+        function persistFont() { try { GM_setValue('assp_font', settings.font); } catch (e) {} }
 
         // 上下偏移（按视频高度的百分比）
         r = mkRow(t('offset'));
