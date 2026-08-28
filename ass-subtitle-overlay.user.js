@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.17
+// @version      1.18
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -33,6 +33,8 @@
     // ---- 在线字幕库（GitHub 仓库）----
     const DEFAULT_REPO = 'https://raw.githubusercontent.com/CCCMNSB/subtitles/main';
     let subtitleRepo = DEFAULT_REPO;                    // 字幕库地址（可在设置里改）
+    // 读取上次保存的字幕库地址（localStorage，@grant none 下可用）
+    try { const s = localStorage.getItem('assp_repo'); if (s) subtitleRepo = s; } catch (e) {}
     let repoCache = { etag: null, data: null, ts: 0 };  // 索引缓存 + ETag
     const repoThrottle = 30000;                         // 刷新节流(ms)
     let mainBox = null;                                 // 面板主控件容器
@@ -240,7 +242,10 @@
         const repoInput = document.createElement('input');
         repoInput.type = 'text'; repoInput.value = subtitleRepo;
         repoInput.style.cssText = 'flex:1;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;';
-        repoInput.addEventListener('input', function () { subtitleRepo = repoInput.value.trim() || DEFAULT_REPO; });
+        repoInput.addEventListener('input', function () {
+            subtitleRepo = repoInput.value.trim() || DEFAULT_REPO;
+            try { localStorage.setItem('assp_repo', subtitleRepo); } catch (e) {}
+        });
         r.row.appendChild(repoInput);
         box.appendChild(r.row);
         setRefs.repoLabel = r.label; setRefs.repoInput = repoInput;
