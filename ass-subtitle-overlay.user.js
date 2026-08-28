@@ -1,0 +1,395 @@
+// ==UserScript==
+// @name         ASS Subtitle Overlay（多说话人）
+// @namespace    CCCMNSB
+// @version      1.3
+// @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
+// @author       CCCMNSB
+// @match        *://*/*
+// @run-at       document-idle
+// @grant        none
+// @noframes
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    let events = [];
+    let overlay = null;
+    let panel = null;
+    let video = null;
+    let active = false;
+    let rafId = 0;
+    let lastTime = -1;
+    let currentSource = '';
+    let uiLang = 'zh';               // 'zh' | 'en'（界面语言）
+    let statusEl = null;
+    const uiRefs = {};               // 界面上需要随语言切换的文字元素
+
+    const I18N = {
+        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件' },
+        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file' }
+    };
+    function t(key) { return I18N[uiLang][key]; }
+    function applyLang() {
+        uiRefs.title.textContent = t('title');
+        uiRefs.langLabel.textContent = t('lang');
+        uiRefs.segZh.textContent = '中文';
+        uiRefs.segEn.textContent = 'English';
+        uiRefs.bLoad.textContent = t('load');
+        uiRefs.bToggle.textContent = t('toggle');
+        uiRefs.bRebind.textContent = t('rebind');
+        // 高亮当前语言
+        uiRefs.segZh.style.background = uiLang === 'zh' ? '#1e88e5' : 'transparent';
+        uiRefs.segEn.style.background = uiLang === 'en' ? '#1e88e5' : 'transparent';
+    }
+
+    function findVideo() {
+        const vids = Array.from(document.querySelectorAll('video'));
+        if (!vids.length) return null;
+        vids.sort((a, b) => area(b) - area(a));
+        return vids[0];
+    }
+    function area(el) { const r = el.getBoundingClientRect(); return r.width * r.height; }
+
+    function setStatus(msg) { if (statusEl) statusEl.textContent = msg; }
+    function hideUi() { if (panel) panel.style.display = 'none'; }
+    function showUi() { if (panel) panel.style.display = 'block'; }
+    function togglePanel() {
+        if (!panel) return;
+        panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    }
+
+    function mkBtn(text, color, cb) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = text;
+        b.style.cssText = 'background:' + color + ';color:#fff;border:0;border-radius:6px;'
+            + 'padding:9px 0;cursor:pointer;font-size:13px;font-family:inherit;';
+        b.addEventListener('click', cb);
+        return b;
+    }
+
+    function buildUI() {
+        panel = document.createElement('div');
+        panel.id = 'assp-panel';
+        panel.style.cssText = 'position:fixed;z-index:2147483600;right:16px;bottom:16px;'
+            + 'background:rgba(22,22,22,.97);color:#eee;border-radius:12px;padding:14px 14px 12px;'
+            + 'width:240px;font:13px/1.4 system-ui,"Segoe UI",sans-serif;'
+            + 'box-shadow:0 6px 24px rgba(0,0,0,.45);';
+
+        // 标题行
+        const titleRow = document.createElement('div');
+        titleRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;';
+        const title = document.createElement('div');
+        title.style.cssText = 'font-weight:700;font-size:14px;';
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.textContent = '×';
+        closeBtn.setAttribute('title', '隐藏面板（Alt+A 可再打开）');
+        closeBtn.style.cssText = 'background:none;color:#aaa;border:0;font-size:20px;cursor:pointer;line-height:1;padding:0 4px;';
+        closeBtn.addEventListener('click', hideUi);
+        titleRow.appendChild(title);
+        titleRow.appendChild(closeBtn);
+        panel.appendChild(titleRow);
+
+        // 语言行
+        const langRow = document.createElement('div');
+        langRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:12px;';
+        const langLabel = document.createElement('span');
+        langLabel.style.cssText = 'color:#aaa;';
+        const langSeg = document.createElement('div');
+        langSeg.style.cssText = 'flex:1;display:flex;background:#2b2b2b;border-radius:8px;overflow:hidden;padding:2px;';
+        const segZh = document.createElement('button');
+        const segEn = document.createElement('button');
+        [segZh, segEn].forEach(function (b) {
+            b.type = 'button';
+            b.style.cssText = 'flex:1;color:#fff;border:0;padding:6px 0;cursor:pointer;font-size:12px;border-radius:6px;';
+        });
+        segZh.addEventListener('click', function () { uiLang = 'zh'; applyLang(); });
+        segEn.addEventListener('click', function () { uiLang = 'en'; applyLang(); });
+        langSeg.appendChild(segZh);
+        langSeg.appendChild(segEn);
+        langRow.appendChild(langLabel);
+        langRow.appendChild(langSeg);
+        panel.appendChild(langRow);
+
+        // 加载本地字幕
+        const bLoad = mkBtn('', '#1e88e5', function () { file.click(); });
+        bLoad.style.width = '100%';
+        panel.appendChild(bLoad);
+
+        // 两个按钮并排
+        const rowwrap = document.createElement('div');
+        rowwrap.style.cssText = 'display:flex;gap:8px;margin-top:8px;';
+        const bToggle = mkBtn('', '#43a047', function () {
+            active = !active; ensureOverlay();
+            overlay.style.display = active ? '' : 'none';
+            setStatus(active ? (uiLang === 'zh' ? '已开启，正在跟随播放…' : 'On, following playback…') : (uiLang === 'zh' ? '已隐藏' : 'Hidden'));
+        });
+        const bRebind = mkBtn('', '#616161', function () {
+            video = findVideo();
+            setStatus(video ? (uiLang === 'zh' ? '已绑定视频。上次加载：' + currentSource : 'Bound. Last loaded: ' + currentSource) : (uiLang === 'zh' ? '未找到 <video> 元素' : 'No <video> found'));
+        });
+        bToggle.style.flex = '1';
+        bRebind.style.flex = '1';
+        rowwrap.appendChild(bToggle);
+        rowwrap.appendChild(bRebind);
+        panel.appendChild(rowwrap);
+
+        // 状态
+        statusEl = document.createElement('div');
+        statusEl.style.cssText = 'margin-top:10px;color:#aaa;word-break:break-all;';
+        panel.appendChild(statusEl);
+
+        document.body.appendChild(panel);
+
+        // 拖动：按住面板空白处可移动（按钮/关闭仍能点击）
+        let drag = null;
+        panel.addEventListener('pointerdown', function (e) {
+            if (e.target.closest('button, input')) return;
+            const rect = panel.getBoundingClientRect();
+            drag = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
+            e.preventDefault();
+        });
+        document.addEventListener('pointermove', function (e) {
+            if (!drag) return;
+            panel.style.left = (e.clientX - drag.dx) + 'px';
+            panel.style.top = (e.clientY - drag.dy) + 'px';
+            panel.style.right = 'auto';
+            panel.style.bottom = 'auto';
+        });
+        document.addEventListener('pointerup', function () { drag = null; });
+
+        // 保存引用
+        uiRefs.title = title; uiRefs.langLabel = langLabel; uiRefs.segZh = segZh; uiRefs.segEn = segEn;
+        uiRefs.bLoad = bLoad; uiRefs.bToggle = bToggle; uiRefs.bRebind = bRebind;
+        applyLang();
+        setStatus(t('ready'));
+    }
+
+    // 文件选择（挂在 body，面板隐藏后还能用）
+    const file = document.createElement('input');
+    file.type = 'file';
+    file.accept = '.ass,.ssa,.srt';
+    file.style.display = 'none';
+    document.body.appendChild(file);
+    file.addEventListener('change', function () { if (file.files && file.files[0]) loadFile(file.files[0]); });
+
+    function loadFile(file) {
+        const r = new FileReader();
+        r.onload = function () {
+            const txt = String(r.result || '');
+            events = /\[script info\]/i.test(txt) ? parseASS(txt) : parseSRT(txt);
+            currentSource = /\[script info\]/i.test(txt) ? 'ASS' : 'SRT';
+            active = true; ensureOverlay(); overlay.style.display = '';
+            lastTime = -1;
+            setStatus((uiLang === 'zh' ? '已加载 ' + currentSource + '，共 ' + events.length + ' 条' : 'Loaded ' + currentSource + ', ' + events.length + ' events'));
+        };
+        r.onerror = function () { setStatus(uiLang === 'zh' ? '读取文件失败' : 'Failed to read file'); };
+        r.readAsText(file);
+    }
+
+    // ------------------------------ ASS
+    function parseASS(text) {
+        let playResY = 1080;
+        const styles = {};
+        let section = '';
+        let fmt = null;
+        const out = [];
+        for (const raw of text.split(/\r?\n/)) {
+            const line = raw.trim();
+            if (!line) continue;
+            if (/^\[.*\]$/.test(line)) { section = line.slice(1, -1); continue; }
+            if (line.startsWith('PlayResY:')) { const v = parseInt(line.slice(9)); if (v > 0) playResY = v; }
+            else if (section === 'V4+ Styles' && line.startsWith('Style:')) {
+                const s = parseStyle(line, playResY);
+                if (s) styles[s.name] = s;
+            } else if (section === 'Events' && line.startsWith('Format:')) {
+                fmt = line.slice(7).split(',').map(function (s) { return s.trim(); });
+            } else if (section === 'Events' && line.startsWith('Dialogue:')) {
+                const d = parseDialogue(line, fmt, styles, playResY);
+                if (d) out.push(d);
+            }
+        }
+        return out;
+    }
+    function parseStyle(line, playResY) {
+        const p = line.slice(6).split(',');
+        if (p.length < 22) return null;
+        return {
+            name: p[0].trim(),
+            fontname: (p[1] || '').trim(),
+            fontSize: (parseFloat(p[2]) || 40) / playResY,
+            primary: assColor(p[3]),
+            outline: assColor(p[5]),
+            bold: parseInt(p[7]) === -1,
+            outlineW: (parseInt(p[16]) || 2) / playResY,
+            alignment: parseInt(p[18]) || 2,
+            marginV: parseInt(p[21]) || 10
+        };
+    }
+    function parseDialogue(line, fmt, styles, playResY) {
+        if (!fmt) return null;
+        const iS = fmt.indexOf('Start'), iE = fmt.indexOf('End'), iSt = fmt.indexOf('Style'), iT = fmt.indexOf('Text');
+        const parts = line.slice(line.indexOf(':') + 1).split(',');
+        function g(i) { return (i >= 0 && i < parts.length) ? parts[i] : ''; }
+        const startMs = tASS(g(iS)), endMs = tASS(g(iE));
+        if (!(endMs > startMs)) return null;
+        const styleName = g(iSt).trim() || 'Default';
+        const st = styles[styleName];
+        let alignment = st ? st.alignment : 2;
+        let primary = st ? st.primary : '#ffffff';
+        let outline = st ? st.outline : '#000000';
+        let yFrac = st ? yFromMargin(st.alignment, st.marginV, playResY) : 0.9;
+        let fontSize = st ? st.fontSize : 0.074;
+        let fontname = st ? st.fontname : '';
+        let bold = st ? st.bold : true;
+        let outlineW = st ? st.outlineW : 0.002;
+        let text = g(iT).trim() || '';
+        const an = /\\an([1-9])/.exec(text);
+        if (an) alignment = +an[1];
+        const c1 = /\\1c&H([0-9a-fA-F]+)&/.exec(text);
+        if (c1) primary = assColor(c1[1]);
+        const c3 = /\\3c&H([0-9a-fA-F]+)&/.exec(text);
+        if (c3) outline = assColor(c3[1]);
+        const pos = /\\pos\(([\d.]+),([\d.]+)\)/.exec(text);
+        if (pos) yFrac = +pos[2] / playResY;
+        text = text.replace(/\\[Nn]/g, '\n').replace(/\{[^}]*\}/g, '').trim();
+        return { startMs: startMs, endMs: endMs, text: text, alignment: alignment, yFrac: yFrac,
+            primary: primary, outline: outline, fontSize: fontSize, fontname: fontname,
+            bold: bold, outlineW: outlineW };
+    }
+    function tASS(t) {
+        const m = /^(\d+):(\d\d):(\d\d)(?:\.(\d+))?$/.exec(t.trim());
+        if (!m) return 0;
+        return (m[1] * 3600 + m[2] * 60 + (+m[3])) * 1000 + (+('0.' + (m[4] || '0')) * 1000);
+    }
+    function yFromMargin(alignment, marginV, playResY) {
+        const mar = marginV / playResY;
+        if (alignment >= 7) return Math.min(1, mar);
+        if (alignment <= 3) return Math.max(0.05, 1 - mar);
+        return 0.5;
+    }
+    function assColor(h) { // &HAABBGGRR -> 'rgb(rr,gg,bb)'
+        let hex = String(h || '').replace(/^&H/i, '').replace(/&$/, '');
+        hex = ('00' + hex).slice(-8);
+        while (hex.length < 8) hex = '00' + hex;
+        const b = parseInt(hex.slice(2, 4), 16);
+        const g = parseInt(hex.slice(4, 6), 16);
+        const r = parseInt(hex.slice(6, 8), 16);
+        return 'rgb(' + r + ',' + g + ',' + b + ')';
+    }
+
+    // ------------------------------ SRT
+    function parseSRT(text) {
+        const out = [];
+        for (const b of text.split(/\r?\n\s*\r?\n/)) {
+            const ls = b.split(/\r?\n/);
+            let ti = -1;
+            for (let i = 0; i < ls.length; i++) if (ls[i].indexOf('-->') >= 0) { ti = i; break; }
+            if (ti < 0) continue;
+            const tm = ls[ti].split('-->');
+            const startMs = tSRT(tm[0].trim()), endMs = tSRT(tm[1].trim());
+            let t = '';
+            for (let i = ti + 1; i < ls.length; i++) if (ls[i].trim()) t += (t ? '\n' : '') + ls[i];
+            if (!t) continue;
+            out.push({ startMs: startMs, endMs: endMs, text: t, alignment: 2, yFrac: 0.9, primary: '#fff', outline: '#000', fontSize: 0.074, fontname: '', bold: true, outlineW: 0.002 });
+        }
+        return out;
+    }
+    function tSRT(t) {
+        const m = /^(\d+):(\d{2}):(\d{2})[,.](?:(\d{1,3}))$/.exec(t);
+        if (!m) return 0;
+        const x = m[4] || '0';
+        const frac = x.length === 3 ? +x : x.length === 2 ? +x * 10 : +x * 100;
+        return (m[1] * 3600 + m[2] * 60 + (+m[3])) * 1000 + frac;
+    }
+
+    // ------------------------------ overlay（挂在视频父容器，低 z-index，避免盖住进度条）
+    // 每帧强制把 overlay 放到 video 的当前父元素，并跟随坐标；这样 B站 全屏把 video 移进全屏容器时也能跟上。
+    function ensureOverlay() {
+        if (overlay) { attachOverlay(); return; }
+        overlay = document.createElement('div');
+        overlay.id = 'assp-overlay';
+        overlay.style.cssText = 'position:absolute;pointer-events:none;z-index:2;overflow:hidden;display:none;';
+        attachOverlay();
+    }
+    function attachOverlay() {
+        if (!overlay) return;
+        let host = (video && video.parentElement) ? video.parentElement : document.body;
+        if (host !== document.body && window.getComputedStyle(host).position === 'static') {
+            host.style.position = 'relative';
+        }
+        if (overlay.parentElement !== host) host.appendChild(overlay);
+    }
+
+    function tick() {
+        if (!video) { rafId = requestAnimationFrame(tick); return; }
+        attachOverlay();
+        const v = video.getBoundingClientRect();
+        const host = overlay.parentElement || document.body;
+        const hr = host.getBoundingClientRect();
+        if (v.width && v.height) {
+            overlay.style.left = (v.left - hr.left) + 'px';
+            overlay.style.top = (v.top - hr.top) + 'px';
+            overlay.style.width = v.width + 'px';
+            overlay.style.height = v.height + 'px';
+        }
+        if (active && events.length) render({ width: v.width, height: v.height });
+        rafId = requestAnimationFrame(tick);
+    }
+
+    function render(rect) {
+        const now = (video.currentTime !== undefined) ? video.currentTime * 1000 : 0;
+        if (now === lastTime) return;
+        lastTime = now;
+        overlay.textContent = '';
+        const h = rect.height, w = rect.width;
+        if (!h || !w) return;
+        for (const e of events) {
+            if (now < e.startMs || now >= e.endMs) continue;
+            const size = Math.max(12, h * e.fontSize);
+            const lineH = size * 1.25;
+            const lines = e.text.split('\n');
+            const blockH = lines.length * lineH;
+            const mod = e.alignment % 3;
+            let y;
+            if (e.alignment <= 3) y = Math.max(0, h * e.yFrac - blockH);
+            else if (e.alignment >= 7) y = Math.min(h - blockH, h * e.yFrac);
+            else y = h * e.yFrac - blockH / 2;
+            y = Math.max(0, Math.min(y, h - blockH));
+            const el = document.createElement('div');
+            const stroke = Math.max(1.5, e.outlineW * h * 2);
+            const fam = (e.fontname ? "'" + e.fontname + "'," : '')
+                + "'Noto Sans CJK SC','Noto Sans SC','Microsoft YaHei',sans-serif";
+            let css = 'position:absolute;white-space:pre;color:' + e.primary
+                + ';font-size:' + size + 'px;'
+                + 'font-family:' + fam + ';'
+                + 'font-weight:' + (e.bold ? 700 : 400) + ';'
+                + 'line-height:' + lineH + 'px;top:' + y + 'px;'
+                + '-webkit-text-stroke:' + stroke + 'px ' + e.outline + ';'
+                + 'paint-order:stroke fill;';
+            if (mod === 2) { css += 'left:0;width:100%;text-align:center;'; }
+            else if (mod === 1) { css += 'left:' + (w * 0.03) + 'px;'; }
+            else { css += 'right:' + (w * 0.03) + 'px;'; }
+            el.style.cssText = css;
+            el.textContent = lines.join('\n');
+            overlay.appendChild(el);
+        }
+    }
+
+    function boot() {
+        if (!document.body) { setTimeout(boot, 200); return; }
+        buildUI();
+        video = findVideo();
+        ensureOverlay();
+        // Alt+A: 显示/隐藏字幕面板
+        window.addEventListener('keydown', function (e) {
+            if (e.altKey && (e.key === 'a' || e.key === 'A')) { e.preventDefault(); togglePanel(); }
+        });
+        setInterval(function () { if (!video || !document.body.contains(video)) video = findVideo(); }, 1500);
+        requestAnimationFrame(tick);
+        setStatus(video ? t('ready') : (uiLang === 'zh' ? '暂未找到 <video>，稍后自动重扫' : 'No <video> yet, re-scanning…'));
+    }
+    boot();
+})();
