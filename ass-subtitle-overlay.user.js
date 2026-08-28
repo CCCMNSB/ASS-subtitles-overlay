@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.25
+// @version      1.26
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -58,16 +58,18 @@
         borderPx: 0,      // 边框粗细（px），0=按 ASS 自动
         font: 'auto',     // 'auto'=跟随字幕字体；否则用指定字体名
         offsetPct: 0,     // 上下偏移（% of video height，负数=上移）
-        assBg: true       // 是否渲染 ASS 不透明背景（BorderStyle=3）
+        assBg: true,      // 是否渲染 ASS 不透明背景（BorderStyle=3）
+        autoJump: true    // 打开视频时自动跳到字幕开始时间（默认开）
     };
     // 读取上次保存的字体选择（GM 存储，全局）
     try { const f = GM_getValue('assp_font', ''); if (f) settings.font = f; } catch (e) {}
-    // 读取其它设置（字号/边框/偏移/ASS背景）
+    // 读取其它设置（字号/边框/偏移/ASS背景/自动跳转）
     function saveSetting(k, v) { try { GM_setValue(k, v); } catch (e) {} }
     try { const n = GM_getValue('assp_fontScale', ''); if (n !== '') settings.fontScale = +n || 75; } catch (e) {}
     try { const n = GM_getValue('assp_borderPx', ''); if (n !== '') settings.borderPx = +n || 0; } catch (e) {}
     try { const n = GM_getValue('assp_offsetPct', ''); if (n !== '') settings.offsetPct = +n || 0; } catch (e) {}
     try { const n = GM_getValue('assp_assBg', ''); if (n !== '') settings.assBg = n === '1'; } catch (e) {}
+    try { const n = GM_getValue('assp_autoJump', ''); if (n !== '') settings.autoJump = n === '1'; } catch (e) {}
     // 实时生效：任何设置改动后把 lastTime 置回 -1，下一帧就重绘一次字幕
     function invalidate() { lastTime = -1; }
     function resetDefaults() {
@@ -82,18 +84,20 @@
         if (setRefs.offInput) setRefs.offInput.value = '0';
         if (setRefs.offVal) setRefs.offVal.textContent = '0%';
         if (setRefs.bgCheck) setRefs.bgCheck.checked = true;
+        settings.autoJump = true;
+        if (setRefs.autoJumpCheck) setRefs.autoJumpCheck.checked = true;
         // 恢复字幕库默认（你的仓库），并清缓存
         subtitleRepo = DEFAULT_REPO;
         if (setRefs.repoInput) setRefs.repoInput.value = subtitleRepo;
         try { GM_setValue('assp_repo', subtitleRepo); } catch (e) {}
         repoCache = { etag: null, data: null, ts: 0, repo: '' };
-        saveSetting('assp_fontScale', 75); saveSetting('assp_borderPx', 0); saveSetting('assp_offsetPct', 0); saveSetting('assp_assBg', '1');
+        saveSetting('assp_fontScale', 75); saveSetting('assp_borderPx', 0); saveSetting('assp_offsetPct', 0); saveSetting('assp_assBg', '1'); saveSetting('assp_autoJump', '1');
         invalidate();
     }
 
     const I18N = {
-        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件', settingsBtn: '设置', fontsize: '字号', border: '边框', font: '字体', offset: '上下偏移', assbg: 'ASS 背景', auto: '默认（跟随字幕）', fontCustom: '或自定义字体名…', fontPlaceholder: '输入字体名，或从建议里选', fontSearch: '搜索字体…', reset: '恢复默认', online: '在线字幕', refresh: '刷新', back: '返回', search: '搜索标题/ID', loading: '加载中…', none: '未找到匹配的字幕', loadFail: '加载失败', repo: '字幕库', loaded: '已加载在线字幕：', prev: '上一页', next: '下一页', play: '打开视频', jump: '跳到该字幕开始', openTime: '打开视频并跳到该时间', jumpErr: '无法跳转' },
-        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file', settingsBtn: 'Settings', fontsize: 'Font size', border: 'Border', font: 'Font', offset: 'Up/Down', assbg: 'ASS bg', auto: 'Auto (follow subtitle)', fontCustom: 'or custom font name…', fontPlaceholder: 'Type a font name, or pick from suggestions', fontSearch: 'Search font…', reset: 'Reset', online: 'Online', refresh: 'Refresh', back: 'Back', search: 'Search title/ID', loading: 'Loading…', none: 'No match', loadFail: 'Load failed', repo: 'Repo', loaded: 'Loaded online: ', prev: '‹ Prev', next: 'Next ›', play: 'Play video', jump: 'Jump to start', openTime: 'Open video at this time', jumpErr: 'Cannot seek' }
+        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件', settingsBtn: '设置', fontsize: '字号', border: '边框', font: '字体', offset: '上下偏移', assbg: 'ASS 背景', autoJump: '自动跳转', auto: '默认（跟随字幕）', fontCustom: '或自定义字体名…', fontPlaceholder: '输入字体名，或从建议里选', fontSearch: '搜索字体…', reset: '恢复默认', online: '在线字幕', refresh: '刷新', back: '返回', search: '搜索标题/ID', loading: '加载中…', none: '未找到匹配的字幕', loadFail: '加载失败', repo: '字幕库', loaded: '已加载在线字幕：', prev: '上一页', next: '下一页', play: '打开视频', jump: '跳到该字幕开始', openTime: '打开视频并跳到该时间', jumpErr: '无法跳转' },
+        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file', settingsBtn: 'Settings', fontsize: 'Font size', border: 'Border', font: 'Font', offset: 'Up/Down', assbg: 'ASS bg', autoJump: 'Auto-jump', auto: 'Auto (follow subtitle)', fontCustom: 'or custom font name…', fontPlaceholder: 'Type a font name, or pick from suggestions', fontSearch: 'Search font…', reset: 'Reset', online: 'Online', refresh: 'Refresh', back: 'Back', search: 'Search title/ID', loading: 'Loading…', none: 'No match', loadFail: 'Load failed', repo: 'Repo', loaded: 'Loaded online: ', prev: '‹ Prev', next: 'Next ›', play: 'Play video', jump: 'Jump to start', openTime: 'Open video at this time', jumpErr: 'Cannot seek' }
     };
     function t(key) { return I18N[uiLang][key]; }
     function applyLang() {
@@ -112,6 +116,7 @@
         if (setRefs.fontLabel) setRefs.fontLabel.textContent = t('font');
         if (setRefs.offsetLabel) setRefs.offsetLabel.textContent = t('offset');
         if (setRefs.assbgLabel) setRefs.assbgLabel.textContent = t('assbg');
+        if (setRefs.autoJumpLabel) setRefs.autoJumpLabel.textContent = t('autoJump');
         if (setRefs.repoLabel) setRefs.repoLabel.textContent = t('repo');
         if (setRefs.fontSearch) setRefs.fontSearch.placeholder = t('fontSearch');
         if (setRefs.fontUpdate) setRefs.fontUpdate();
@@ -338,6 +343,16 @@
         r.row.appendChild(bgCheck);
         box.appendChild(r.row);
         setRefs.assbgLabel = r.label; setRefs.bgCheck = bgCheck;
+
+        // 自动跳转（打开视频带时间）
+        r = mkRow(t('autoJump'));
+        const autoJumpCheck = document.createElement('input');
+        autoJumpCheck.type = 'checkbox'; autoJumpCheck.checked = settings.autoJump;
+        autoJumpCheck.style.cssText = 'width:16px;height:16px;';
+        autoJumpCheck.addEventListener('change', function () { settings.autoJump = autoJumpCheck.checked; saveSetting('assp_autoJump', settings.autoJump ? '1' : '0'); });
+        r.row.appendChild(autoJumpCheck);
+        box.appendChild(r.row);
+        setRefs.autoJumpLabel = r.label; setRefs.autoJumpCheck = autoJumpCheck;
 
         // 字幕库地址
         r = mkRow(t('repo'));
@@ -619,25 +634,32 @@
         } catch (e) { setStatus(t('loadFail') + ' ' + id); }
     }
 
-    // 右边 ▶：打开该字幕对应的视频，并自动跳到该字幕开始时间（用 t= 秒数链接）
+    // 右边 ▶：打开该字幕对应的视频（可选：自动跳到该字幕开始时间）
     async function openOnlineVideoAtStart(id) {
-        let startSec = 0;
-        if (loadedSubtitleId === id && events.length) {
-            startSec = (events[0].startMs || 0) / 1000;   // 已加载过，直接用第一条
+        let url;
+        if (!settings.autoJump) {
+            url = /^BV/i.test(id)
+                ? 'https://www.bilibili.com/video/' + encodeURIComponent(id)
+                : 'https://www.youtube.com/watch?v=' + encodeURIComponent(id);
         } else {
-            try {
-                const text = await fetchSubtitleText(id);
-                if (text) {
-                    const ev = /\[script info\]/i.test(text) ? parseASS(text) : parseSRT(text);
-                    if (ev.length) startSec = (ev[0].startMs || 0) / 1000;
-                }
-            } catch (e) {}
+            let startSec = 0;
+            if (loadedSubtitleId === id && events.length) {
+                startSec = (events[0].startMs || 0) / 1000;   // 已加载过，直接用第一条
+            } else {
+                try {
+                    const text = await fetchSubtitleText(id);
+                    if (text) {
+                        const ev = /\[script info\]/i.test(text) ? parseASS(text) : parseSRT(text);
+                        if (ev.length) startSec = (ev[0].startMs || 0) / 1000;
+                    }
+                } catch (e) {}
+            }
+            let target = Math.floor(startSec - SUB_JUMP_BACK);
+            if (!isFinite(target) || target < 0) target = 0;   // 兜底：绝不为负
+            url = /^BV/i.test(id)
+                ? 'https://www.bilibili.com/video/' + encodeURIComponent(id) + '?t=' + target
+                : 'https://www.youtube.com/watch?v=' + encodeURIComponent(id) + '&t=' + target + 's';
         }
-        let target = Math.floor(startSec - SUB_JUMP_BACK);
-        if (!isFinite(target) || target < 0) target = 0;   // 兜底：绝不为负
-        const url = /^BV/i.test(id)
-            ? 'https://www.bilibili.com/video/' + encodeURIComponent(id) + '?t=' + target
-            : 'https://www.youtube.com/watch?v=' + encodeURIComponent(id) + '&t=' + target + 's';
         window.open(url, '_blank', 'noopener');
     }
 
