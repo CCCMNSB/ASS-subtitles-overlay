@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.32
+// @version      1.33
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -36,9 +36,7 @@
     let subtitleRepo = DEFAULT_REPO;                    // 字幕库地址（可在设置里改）
     // 读取上次保存的字幕库地址（GM 存储，跨网站全局）
     try { const s = GM_getValue('assp_repo', ''); if (s) subtitleRepo = s; } catch (e) {}
-    let repoCache = { etag: null, data: null, ts: 0, repo: '' };  // 索引缓存 + ETag（按仓库区分）
-    let lastRefreshTs = 0;                                 // 上次强制刷新时间（用于 30s 限制）
-    const repoThrottle = 30000;                         // 刷新节流(ms)
+    let repoCache = { etag: null, data: null, ts: 0, repo: '' };  // 索引缓存（按仓库区分）
     let mainBox = null;                                 // 面板主控件容器
     let onlineBox = null;                               // 在线字幕列表容器
     let onlineListEl = null;                            // 列表滚动容器
@@ -85,7 +83,6 @@
         if (setRefs.offInput) setRefs.offInput.value = '0';
         if (setRefs.offVal) setRefs.offVal.textContent = '0%';
         if (setRefs.bgCheck) setRefs.bgCheck.checked = true;
-        settings.autoJump = true;
         if (setRefs.autoJumpCheck) setRefs.autoJumpCheck.checked = true;
         // 恢复字幕库默认（你的仓库），并清缓存
         subtitleRepo = DEFAULT_REPO;
@@ -453,16 +450,16 @@
         langRow.appendChild(langSeg);
         mainBox.appendChild(langRow);
 
+        // 在线字幕按钮
+        const bOnline = mkBtn('', '#0d47a1', function () { openOnline(false); });
+        bOnline.style.width = '100%';
+        mainBox.appendChild(bOnline);
+
         // 加载本地字幕
         const bLoad = mkBtn('', '#1e88e5', function () { file.click(); });
         bLoad.style.width = '100%';
+        bLoad.style.marginTop = '8px';
         mainBox.appendChild(bLoad);
-
-        // 在线字幕按钮（放本地字幕正下方）
-        const bOnline = mkBtn('', '#0d47a1', function () { openOnline(false); });
-        bOnline.style.width = '100%';
-        bOnline.style.marginTop = '8px';
-        mainBox.appendChild(bOnline);
 
         // 两个按钮并排
         const rowwrap = document.createElement('div');
@@ -608,10 +605,11 @@
         return null;
     }
 
-    // 拉取 index/index.json：始终 no-store（每次都拿最新，避免浏览器/协议缓存导致不实时）
+    // 拉取 index/index.json：平时 no-cache（320/304 空回应低压力，改动则 200 实时）；刷新 no-store 保证必取最新
     async function fetchRepoList(force) {
         const url = repoBase() + '/index/index.json';
-        const res = await fetch(url, { cache: 'no-store' });
+        const res = await fetch(url, { cache: force ? 'no-store' : 'no-cache' });
+        if (res.status === 304 && repoCache.data) { repoCache.ts = Date.now(); return repoCache.data; }
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         repoCache.repo = subtitleRepo;
@@ -771,6 +769,7 @@
         if (mainBox) mainBox.style.display = 'none';
         if (onlineBox) onlineBox.style.display = '';
         setStatus(t('loading'));
+        if (onlineRefs.bRefresh) { onlineRefs.bRefresh.disabled = true; onlineRefs.bRefresh.textContent = '…'; }
         try {
             onlineData = await fetchRepoList(force);
             onlinePage = 0;
@@ -784,6 +783,7 @@
             if (onlineListEl) onlineListEl.appendChild(err);
             setStatus(t('loadFail'));
         }
+        if (onlineRefs.bRefresh) { onlineRefs.bRefresh.disabled = false; onlineRefs.bRefresh.textContent = t('refresh'); }
     }
 
     function closeOnline() {
