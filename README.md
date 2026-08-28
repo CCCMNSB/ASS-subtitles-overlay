@@ -2,11 +2,13 @@
 
 > 在网页 `<video>` 上叠加本地 `.ass` / `.ssa` / `.srt` 字幕，多说话人同时显示，并保留 ASS 原始颜色与位置。
 
-[English](README.en.md) · [简体中文](README.md)
+[简体中文](#中文) · [English](#english)
 
 ---
 
-## 功能
+## 中文
+
+### 功能
 
 - **加载本地字幕文件**（ASS / SSA / SRT）直接叠加到页面视频上，无需上传。
 - **多说话人同时显示** —— 当前时间段内所有活跃的字幕事件一并渲染。
@@ -16,7 +18,7 @@
 - **可拖动面板** —— 按住面板空白处可拖到任意位置，按钮仍可正常点击。
 - **全屏友好** —— 全屏时字幕跟随视频，并渲染在播放器控件之下，进度条不被遮挡。
 
-## 安装
+### 安装
 
 1. 安装脚本管理器 —— [Tampermonkey](https://www.tampermonkey.net/)（Chrome / Edge / Firefox）或 [Violentmonkey](https://violentmonkey.github.io/)。
 2. 通过下方 **raw** 链接安装本脚本（或新建脚本后粘贴 [`ass-subtitle-overlay.user.js`](./ass-subtitle-overlay.user.js) 的内容）。
@@ -25,7 +27,7 @@
    https://raw.githubusercontent.com/CCCMNSB/ASS-subtitles-overlay/main/ass-subtitle-overlay.user.js
    ```
 
-## 使用
+### 使用
 
 1. 在含 `<video>` 的页面，字幕面板出现在**右下角**。
 2. 选择面板语言（**中文 / English**）。
@@ -33,20 +35,65 @@
 4. 字幕直接叠加在视频上，随播放显示。
 5. 用 **显示 / 隐藏** 开关，**重新绑定视频** 重新关联视频，**×** 隐藏面板（或按 **Alt+A** 显示/隐藏）。
 
-## 快捷键
+### 快捷键
 
 | 按键 | 作用 |
 | --- | --- |
 | `Alt + A` | 显示 / 隐藏字幕面板 |
 
-## 说明
+### 说明
 
 - 字幕叠加层避让播放器控件，进度条仍可正常点击。
 - 底部对齐的字幕会限制在视频区域内，避免超出边界。
 - 需要脚本管理器（网站要求权限时请允许该脚本运行）。
 
+[English](#english) · [简体中文](#中文)
+
 ---
 
-## 许可
+## English
+
+### Features
+
+- **Load local subtitle files** (ASS / SSA / SRT) directly onto the page video — no upload needed.
+- **Multiple speakers rendered simultaneously** — every active event in the current time range is drawn at once.
+- **Keeps ASS colors** — text uses the ASS `PrimaryColour`, the border uses `OutlineColour`, per speaker.
+- **Keeps ASS positions** — respects `\pos` and each style's alignment / vertical margins.
+- **Bilingual panel (中文 / English)** — the panel's own text switches language; this is independent of the subtitle content.
+- **Draggable panel** — drag it anywhere; all buttons still work.
+- **Fullscreen-safe** — subtitles follow the video into fullscreen and render below the player's controls, so the progress bar stays clickable.
+
+### Installation
+
+1. Install a userscript manager — [Tampermonkey](https://www.tampermonkey.net/) (Chrome / Edge / Firefox) or [Violentmonkey](https://violentmonkey.github.io/).
+2. Install the script from the raw link below (or create a new script and paste the contents of [`ass-subtitle-overlay.user.js`](./ass-subtitle-overlay.user.js)).
+
+   ```
+   https://raw.githubusercontent.com/CCCMNSB/ASS-subtitles-overlay/main/ass-subtitle-overlay.user.js
+   ```
+
+### Usage
+
+1. On a page with a `<video>`, the subtitle panel appears at the **bottom-right corner**.
+2. Choose the panel language (**中文 / English**).
+3. Click **Load Local Subtitle** and pick your `.ass` / `.ssa` / `.srt` file.
+4. Subtitles are drawn directly on the video, following playback.
+5. Use **Show / Hide** to toggle, **Re-bind Video** to re-attach to the video, and **×** to hide the panel (or press **Alt+A** to show/hide it).
+
+### Shortcut
+
+| Key | Action |
+| --- | --- |
+| `Alt + A` | Show / hide the subtitle panel |
+
+### Notes
+
+- The overlay avoids the player's floating controls, so the progress bar stays fully clickable.
+- Bottom-anchored subtitles are clamped to stay inside the video area.
+- A userscript manager is required (allow the script to run when a site asks for permission).
+
+---
+
+## License / 许可
 
 [MIT](./LICENSE) © CCCMNSB
