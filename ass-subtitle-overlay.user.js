@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.9
+// @version      1.10
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -480,16 +480,29 @@
     function tick() {
         if (!video) { rafId = requestAnimationFrame(tick); return; }
         attachOverlay();
-        const v = video.getBoundingClientRect();
+        const cr = video.getBoundingClientRect();
         const host = overlay.parentElement || document.body;
         const hr = host.getBoundingClientRect();
-        if (v.width && v.height) {
-            overlay.style.left = (v.left - hr.left) + 'px';
-            overlay.style.top = (v.top - hr.top) + 'px';
-            overlay.style.width = v.width + 'px';
-            overlay.style.height = v.height + 'px';
+        // 画面实际区域（排除 letterbox 黑边）：用视频原生宽高比换算
+        let l = cr.left, t = cr.top, w = cr.width, hh = cr.height;
+        const vw = video.videoWidth || 0, vh = video.videoHeight || 0;
+        if (vw > 0 && vh > 0) {
+            const vAR = vw / vh, eAR = w / hh;
+            if (vAR > eAR) {            // 视频比容器宽 → 上下黑边
+                const nh = w / vAR;
+                t += (hh - nh) / 2; hh = nh;
+            } else if (vAR < eAR) {     // 视频比容器高 → 左右黑边
+                const nw = hh * vAR;
+                l += (w - nw) / 2; w = nw;
+            }
         }
-        if (active && events.length) render({ width: v.width, height: v.height });
+        if (w && hh) {
+            overlay.style.left = (l - hr.left) + 'px';
+            overlay.style.top = (t - hr.top) + 'px';
+            overlay.style.width = w + 'px';
+            overlay.style.height = hh + 'px';
+        }
+        if (active && events.length) render({ width: w, height: hh });
         rafId = requestAnimationFrame(tick);
     }
 
