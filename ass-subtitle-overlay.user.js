@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.33
+// @version      1.34
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -15,6 +15,13 @@
 
 (function () {
     'use strict';
+
+    // =====================================================================================
+    // ASS Subtitle Overlay（多说话人）
+    // 结构：状态/设置 → ASS/SRT 解析 → overlay 渲染 → 在线字幕库 → UI 面板 → boot 启动。
+    // 关键约束：① 用 createElement+textContent（勿用 innerHTML，TrustedHTML 会拦截）；
+    //           ② 联网用 fetch(raw.githubusercontent 允许 CORS *)；③ @grant 用了 GM 存储做全局持久化。
+    // =====================================================================================
 
     let events = [];
     let overlay = null;
@@ -36,7 +43,7 @@
     let subtitleRepo = DEFAULT_REPO;                    // 字幕库地址（可在设置里改）
     // 读取上次保存的字幕库地址（GM 存储，跨网站全局）
     try { const s = GM_getValue('assp_repo', ''); if (s) subtitleRepo = s; } catch (e) {}
-    let repoCache = { etag: null, data: null, ts: 0, repo: '' };  // 索引缓存（按仓库区分）
+    let repoCache = { data: null, ts: 0, repo: '' };  // 索引缓存（按仓库区分）
     let mainBox = null;                                 // 面板主控件容器
     let onlineBox = null;                               // 在线字幕列表容器
     let onlineListEl = null;                            // 列表滚动容器
@@ -219,6 +226,76 @@
         return out;
     }
 
+    // 字体选择：可搜索下拉（触发器 + 弹层内搜索框）。点击弹出列表、可输文字搜索；默认=跟随字幕
+    function setupFontPicker(row) {
+        const fcWrap = document.createElement('div');
+        fcWrap.style.cssText = 'position:relative;flex:1;';
+        const fcTrigger = document.createElement('div');
+        fcTrigger.style.cssText = 'display:flex;align-items:center;justify-content:space-between;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px 8px;cursor:pointer;font-size:12.5px;';
+        const fcLabel = document.createElement('span');
+        fcLabel.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        const fcChevron = document.createElement('span');
+        fcChevron.textContent = '▾';
+        fcChevron.style.cssText = 'color:#888;flex-shrink:0;';
+        fcTrigger.appendChild(fcLabel); fcTrigger.appendChild(fcChevron);
+        const fcPanel = document.createElement('div');
+        fcPanel.style.cssText = 'position:absolute;z-index:2147483601;left:0;right:0;top:calc(100% + 2px);background:#1e1e1e;border:1px solid #444;border-radius:6px;display:none;';
+        const fcSearch = document.createElement('input');
+        fcSearch.type = 'text';
+        fcSearch.placeholder = t('fontSearch');
+        fcSearch.style.cssText = 'width:100%;background:#2b2b2b;color:#eee;border:0;border-bottom:1px solid #444;padding:6px 8px;box-sizing:border-box;';
+        const fcList = document.createElement('div');
+        fcList.style.cssText = 'max-height:160px;overflow-y:auto;';
+        fcPanel.appendChild(fcSearch); fcPanel.appendChild(fcList);
+
+        function fcOptions() {
+            return [{ v: 'auto', label: t('auto') }]
+                .concat(detectFonts().map(function (f) { return { v: f, label: f }; }))
+                .concat([{ v: 'sans-serif', label: 'sans-serif' }, { v: 'serif', label: 'serif' }, { v: 'monospace', label: 'monospace' }]);
+        }
+        const fontOptions = fcOptions();
+        function sanitizeFont(v) { return String(v || '').replace(/["',;\n]/g, '').trim().slice(0, 60); }
+        function fontLabel(v) { for (const o of fontOptions) if (o.v === v) return o.label; return v; }
+        function persistFont() { try { GM_setValue('assp_font', settings.font); } catch (e) {} }
+        function fcUpdateLabel() { fcLabel.textContent = (settings.font && settings.font !== 'auto') ? fontLabel(settings.font) : t('auto'); }
+        function fcRender(filter) {
+            fcList.textContent = '';
+            const q = (filter || '').toLowerCase();
+            const shown = fontOptions.filter(function (o) { return !q || o.label.toLowerCase().indexOf(q) >= 0; });
+            if (shown.length) {
+                shown.forEach(function (o) {
+                    const it = document.createElement('div');
+                    it.style.cssText = 'padding:6px 8px;color:#eee;font-size:12.5px;cursor:pointer;';
+                    if ((o.v === settings.font) || (settings.font === 'auto' && o.v === 'auto')) it.style.background = '#0d47a1';
+                    it.textContent = o.label;
+                    it.addEventListener('click', function (ev) { ev.stopPropagation(); fcSelect(o.v); });
+                    fcList.appendChild(it);
+                });
+            } else {
+                const l = document.createElement('div');
+                l.style.cssText = 'padding:6px 8px;color:#aaa;font-size:12px;cursor:pointer;';
+                l.textContent = '使用 "' + (filter || '') + '"';
+                l.addEventListener('click', function (ev) { ev.stopPropagation(); fcSelect(filter); });
+                fcList.appendChild(l);
+            }
+        }
+        function fcOpen() { fcSearch.value = ''; fcRender(''); fcPanel.style.display = ''; }
+        function fcClose() { fcPanel.style.display = 'none'; }
+        function fcSelect(v) {
+            settings.font = sanitizeFont(v) || 'auto';
+            fcUpdateLabel();
+            invalidate(); persistFont(); fcClose();
+        }
+        fcTrigger.addEventListener('click', function (ev) { ev.stopPropagation(); if (fcPanel.style.display === 'none') fcOpen(); else fcClose(); });
+        fcSearch.addEventListener('input', function () { fcRender(fcSearch.value); });
+        fcSearch.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); fcSelect(fcSearch.value.trim()); } if (e.key === 'Escape') fcClose(); });
+        document.addEventListener('click', function (e) { if (!fcWrap.contains(e.target)) fcClose(); });
+        fcWrap.appendChild(fcTrigger); fcWrap.appendChild(fcPanel);
+        row.row.appendChild(fcWrap);
+        setRefs.fontLabel = row.label; setRefs.fontSearch = fcSearch; setRefs.fontUpdate = fcUpdateLabel; setRefs.fontCustom = null;
+        fcUpdateLabel();
+    }
+
     function buildSettings() {
         const box = document.createElement('div');
         box.id = 'assp-settings';
@@ -276,75 +353,10 @@
         box.appendChild(r.row);
         setRefs.borderLabel = r.label; setRefs.bdVal = bdVal; setRefs.bdInput = bdInput;
 
-        // 字体：下拉触发器 + 下拉内搜索框（点击弹出字体列表，不用手动删文字）
+        // 字体（可搜索下拉）
         r = mkRow(t('font'));
-        const fcWrap = document.createElement('div');
-        fcWrap.style.cssText = 'position:relative;flex:1;';
-        const fcTrigger = document.createElement('div');
-        fcTrigger.style.cssText = 'display:flex;align-items:center;justify-content:space-between;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px 8px;cursor:pointer;font-size:12.5px;';
-        const fcLabel = document.createElement('span');
-        fcLabel.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-        const fcChevron = document.createElement('span');
-        fcChevron.textContent = '▾';
-        fcChevron.style.cssText = 'color:#888;flex-shrink:0;';
-        fcTrigger.appendChild(fcLabel); fcTrigger.appendChild(fcChevron);
-        const fcPanel = document.createElement('div');
-        fcPanel.style.cssText = 'position:absolute;z-index:2147483601;left:0;right:0;top:calc(100% + 2px);background:#1e1e1e;border:1px solid #444;border-radius:6px;display:none;';
-        const fcSearch = document.createElement('input');
-        fcSearch.type = 'text';
-        fcSearch.placeholder = t('fontSearch');
-        fcSearch.style.cssText = 'width:100%;background:#2b2b2b;color:#eee;border:0;border-bottom:1px solid #444;padding:6px 8px;box-sizing:border-box;';
-        const fcList = document.createElement('div');
-        fcList.style.cssText = 'max-height:160px;overflow-y:auto;';
-        fcPanel.appendChild(fcSearch); fcPanel.appendChild(fcList);
-        function fcOptions() {
-            return [{ v: 'auto', label: t('auto') }]
-                .concat(detectFonts().map(function (f) { return { v: f, label: f }; }))
-                .concat([{ v: 'sans-serif', label: 'sans-serif' }, { v: 'serif', label: 'serif' }, { v: 'monospace', label: 'monospace' }]);
-        }
-        const fontOptions = fcOptions();
-        function sanitizeFont(v) { return String(v || '').replace(/["',;\n]/g, '').trim().slice(0, 60); }
-        function fontLabel(v) { for (const o of fontOptions) if (o.v === v) return o.label; return v; }
-        function persistFont() { try { GM_setValue('assp_font', settings.font); } catch (e) {} }
-        function fcUpdateLabel() { fcLabel.textContent = (settings.font && settings.font !== 'auto') ? fontLabel(settings.font) : t('auto'); }
-        function fcRender(filter) {
-            fcList.textContent = '';
-            const q = (filter || '').toLowerCase();
-            const shown = fontOptions.filter(function (o) { return !q || o.label.toLowerCase().indexOf(q) >= 0; });
-            if (shown.length) {
-                shown.forEach(function (o) {
-                    const it = document.createElement('div');
-                    it.style.cssText = 'padding:6px 8px;color:#eee;font-size:12.5px;cursor:pointer;';
-                    if ((o.v === settings.font) || (settings.font === 'auto' && o.v === 'auto')) it.style.background = '#0d47a1';
-                    it.textContent = o.label;
-                    it.addEventListener('click', function (ev) { ev.stopPropagation(); fcSelect(o.v); });
-                    fcList.appendChild(it);
-                });
-            } else {
-                const l = document.createElement('div');
-                l.style.cssText = 'padding:6px 8px;color:#aaa;font-size:12px;cursor:pointer;';
-                l.textContent = '使用 "' + (filter || '') + '"';
-                l.addEventListener('click', function (ev) { ev.stopPropagation(); fcSelect(filter); });
-                fcList.appendChild(l);
-            }
-        }
-        function fcOpen() { fcSearch.value = ''; fcRender(''); fcPanel.style.display = ''; }
-        function fcClose() { fcPanel.style.display = 'none'; }
-        function fcSelect(v) {
-            settings.font = sanitizeFont(v) || 'auto';
-            fcUpdateLabel();
-            invalidate(); persistFont(); fcClose();
-        }
-        fcTrigger.addEventListener('click', function (ev) { ev.stopPropagation(); if (fcPanel.style.display === 'none') fcOpen(); else fcClose(); });
-        fcSearch.addEventListener('input', function () { fcRender(fcSearch.value); });
-        fcSearch.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); fcSelect(fcSearch.value.trim()); } if (e.key === 'Escape') fcClose(); });
-        document.addEventListener('click', function (e) { if (!fcWrap.contains(e.target)) fcClose(); });
-        fcWrap.appendChild(fcTrigger); fcWrap.appendChild(fcPanel);
-        r.row.appendChild(fcWrap);
+        setupFontPicker(r);
         box.appendChild(r.row);
-        setRefs.fontLabel = r.label; setRefs.fontSearch = fcSearch; setRefs.fontUpdate = fcUpdateLabel; setRefs.fontCustom = null;
-        fcUpdateLabel();
-        function persistFont() { try { GM_setValue('assp_font', settings.font); } catch (e) {} }
 
         // 上下偏移（按视频高度的百分比）
         r = mkRow(t('offset'));
@@ -605,9 +617,10 @@
         return null;
     }
 
-    // 拉取 index/index.json：平时 no-cache（320/304 空回应低压力，改动则 200 实时）；刷新 no-store 保证必取最新
+    // 拉取 index/index.json：平时 no-cache（没变→304 空回应低压力、变了→200 实时）；刷新带时间戳+no-store 强制取最新
     async function fetchRepoList(force) {
-        const url = repoBase() + '/index/index.json';
+        let url = repoBase() + '/index/index.json';
+        if (force) url += (url.indexOf('?') >= 0 ? '&' : '?') + '_=' + Date.now();   // 刷新：时间戳绕过浏览器/边缘缓存
         const res = await fetch(url, { cache: force ? 'no-store' : 'no-cache' });
         if (res.status === 304 && repoCache.data) { repoCache.ts = Date.now(); return repoCache.data; }
         if (!res.ok) throw new Error('HTTP ' + res.status);
