@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.5
+// @version      1.6
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -33,15 +33,27 @@
         fontScale: 100,   // 字号（%），100=按 ASS 原样
         borderPx: 0,      // 边框粗细（px），0=按 ASS 自动
         font: 'auto',     // 'auto'=跟随字幕字体；否则用指定字体名
-        offsetY: 0,       // 上下偏移（px，负数=上移）
+        offsetPct: 0,     // 上下偏移（% of video height，负数=上移）
         assBg: true       // 是否渲染 ASS 不透明背景（BorderStyle=3）
     };
     // 实时生效：任何设置改动后把 lastTime 置回 -1，下一帧就重绘一次字幕
     function invalidate() { lastTime = -1; }
+    function resetDefaults() {
+        settings.fontScale = 100; settings.borderPx = 0; settings.font = 'auto'; settings.offsetPct = 0; settings.assBg = true;
+        if (setRefs.sizeInput) setRefs.sizeInput.value = '100';
+        if (setRefs.sizeVal) setRefs.sizeVal.textContent = '100%';
+        if (setRefs.bdInput) setRefs.bdInput.value = '0';
+        if (setRefs.bdVal) setRefs.bdVal.textContent = '0px';
+        if (setRefs.fontSel) setRefs.fontSel.value = 'auto';
+        if (setRefs.offInput) setRefs.offInput.value = '0';
+        if (setRefs.offVal) setRefs.offVal.textContent = '0%';
+        if (setRefs.bgCheck) setRefs.bgCheck.checked = true;
+        invalidate();
+    }
 
     const I18N = {
-        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件', settingsBtn: '设置', fontsize: '字号', border: '边框', font: '字体', offset: '上下偏移', assbg: 'ASS 背景', auto: '默认（跟随字幕）', fontCustom: '或自定义字体名…' },
-        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file', settingsBtn: 'Settings', fontsize: 'Font size', border: 'Border', font: 'Font', offset: 'Up/Down', assbg: 'ASS bg', auto: 'Auto (follow subtitle)', fontCustom: 'or custom font name…' }
+        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件', settingsBtn: '设置', fontsize: '字号', border: '边框', font: '字体', offset: '上下偏移', assbg: 'ASS 背景', auto: '默认（跟随字幕）', fontCustom: '或自定义字体名…', reset: '恢复默认' },
+        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file', settingsBtn: 'Settings', fontsize: 'Font size', border: 'Border', font: 'Font', offset: 'Up/Down', assbg: 'ASS bg', auto: 'Auto (follow subtitle)', fontCustom: 'or custom font name…', reset: 'Reset' }
     };
     function t(key) { return I18N[uiLang][key]; }
     function applyLang() {
@@ -118,7 +130,7 @@
         sizeInput.addEventListener('input', function () { settings.fontScale = +sizeInput.value; sizeVal.textContent = settings.fontScale + '%'; invalidate(); });
         r.row.appendChild(sizeInput); r.row.appendChild(sizeVal);
         box.appendChild(r.row);
-        setRefs.sizeLabel = r.label; setRefs.sizeVal = sizeVal;
+        setRefs.sizeLabel = r.label; setRefs.sizeVal = sizeVal; setRefs.sizeInput = sizeInput;
 
         // 边框
         r = mkRow(t('border'));
@@ -131,7 +143,7 @@
         bdInput.addEventListener('input', function () { settings.borderPx = +bdInput.value; bdVal.textContent = settings.borderPx + 'px'; invalidate(); });
         r.row.appendChild(bdInput); r.row.appendChild(bdVal);
         box.appendChild(r.row);
-        setRefs.borderLabel = r.label; setRefs.bdVal = bdVal;
+        setRefs.borderLabel = r.label; setRefs.bdVal = bdVal; setRefs.bdInput = bdInput;
 
         // 字体
         r = mkRow(t('font'));
@@ -146,18 +158,18 @@
         box.appendChild(r.row);
         setRefs.fontLabel = r.label; setRefs.fontSel = fontSel;
 
-        // 上下偏移（滑块）
+        // 上下偏移（按视频高度的百分比）
         r = mkRow(t('offset'));
         const offInput = document.createElement('input');
-        offInput.type = 'range'; offInput.min = '-400'; offInput.max = '400'; offInput.step = '5'; offInput.value = settings.offsetY;
+        offInput.type = 'range'; offInput.min = '-120'; offInput.max = '120'; offInput.step = '1'; offInput.value = settings.offsetPct;
         offInput.style.cssText = 'flex:1;';
         const offVal = document.createElement('span');
-        offVal.style.cssText = 'color:#eee;width:56px;text-align:right;';
-        offVal.textContent = (settings.offsetY >= 0 ? '+' : '') + settings.offsetY + 'px';
-        offInput.addEventListener('input', function () { settings.offsetY = +offInput.value; offVal.textContent = (settings.offsetY >= 0 ? '+' : '') + settings.offsetY + 'px'; invalidate(); });
+        offVal.style.cssText = 'color:#eee;width:52px;text-align:right;';
+        offVal.textContent = (settings.offsetPct >= 0 ? '+' : '') + settings.offsetPct + '%';
+        offInput.addEventListener('input', function () { settings.offsetPct = +offInput.value; offVal.textContent = (settings.offsetPct >= 0 ? '+' : '') + settings.offsetPct + '%'; invalidate(); });
         r.row.appendChild(offInput); r.row.appendChild(offVal);
         box.appendChild(r.row);
-        setRefs.offsetLabel = r.label; setRefs.offVal = offVal;
+        setRefs.offsetLabel = r.label; setRefs.offVal = offVal; setRefs.offInput = offInput;
 
         // ASS 背景
         r = mkRow(t('assbg'));
@@ -167,7 +179,13 @@
         bgCheck.addEventListener('change', function () { settings.assBg = bgCheck.checked; invalidate(); });
         r.row.appendChild(bgCheck);
         box.appendChild(r.row);
-        setRefs.assbgLabel = r.label;
+        setRefs.assbgLabel = r.label; setRefs.bgCheck = bgCheck;
+
+        // 恢复默认
+        const bReset = mkBtn(t('reset'), '#e53935', resetDefaults);
+        bReset.style.width = '100%';
+        bReset.style.marginTop = '8px';
+        box.appendChild(bReset);
 
         return box;
     }
@@ -508,22 +526,23 @@
                 + '-webkit-text-stroke:' + stroke + 'px ' + e.outline + ';'
                 + 'paint-order:stroke fill;';
             if (bg) css += 'background:' + assColorA(e.backColour) + ';padding:2px 6px;border-radius:2px;';
+            const offPx = settings.offsetPct / 100 * h;   // 上下偏移（按视频高度）
             // 对齐 + 上下偏移（用 transform 统一偏移）
             let transform;
             if (mod === 2) {
                 if (bg) {
                     css += 'left:50%;width:max-content;';
-                    transform = 'translate(calc(-50%), ' + settings.offsetY + 'px)';
+                    transform = 'translate(calc(-50%), ' + offPx + 'px)';
                 } else {
                     css += 'left:0;width:100%;text-align:center;';
-                    transform = 'translate(0,' + settings.offsetY + 'px)';
+                    transform = 'translate(0,' + offPx + 'px)';
                 }
             } else if (mod === 1) {
                 css += 'left:' + (w * 0.03) + 'px;';
-                transform = 'translate(0,' + settings.offsetY + 'px)';
+                transform = 'translate(0,' + offPx + 'px)';
             } else {
                 css += 'right:' + (w * 0.03) + 'px;';
-                transform = 'translate(0,' + settings.offsetY + 'px)';
+                transform = 'translate(0,' + offPx + 'px)';
             }
             css += 'transform:' + transform + ';';
             el.style.cssText = css;
