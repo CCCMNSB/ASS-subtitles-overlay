@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.7
+// @version      1.8
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -382,7 +382,7 @@
         let fontname = st ? st.fontname : '';
         let bold = st ? st.bold : true;
         let outlineW = st ? st.outlineW : 0.002;
-        let text = g(iT).trim() || '';
+        let text = (iT >= 0 ? parts.slice(iT).join(',') : '').trim() || '';   // Text 是最后字段，需把含逗号的残留片段拼回
         const an = /\\an([1-9])/.exec(text);
         if (an) alignment = +an[1];
         const c1 = /\\1c&H([0-9a-fA-F]+)&/.exec(text);
