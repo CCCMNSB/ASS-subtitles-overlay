@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.44
+// @version      1.45
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。支持会员视频 .enc（用视频自动字幕派生 key 解密）。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -712,6 +712,28 @@
         return new TextDecoder().decode(plain);
     }
     function canonCaptionText(s) {
+        // ① protobuf (YouTube timedtext json: wireMagic + events[].segs[].utf8)
+        if (s.indexOf('"wireMagic"') >= 0) {
+            try {
+                const d = JSON.parse(s);
+                const segs = [];
+                const evs = (d && d.events) || [];
+                for (const ev of evs) {
+                    const segArr = (ev && ev.segs) || [];
+                    let t = '';
+                    for (const seg of segArr) t += (seg && seg.utf8) || '';
+                    if (t.trim()) segs.push(t);
+                }
+                if (segs.length) return segs.join('\n');
+            } catch (e) { /* fall through */ }
+        }
+        // ② srt3 TTML: >内容<
+        const m2 = s.match(/>([^<>]{1,})</g);
+        if (m2 && m2.length) {
+            const segs2 = m2.map(function (x) { return x.slice(1, -1).trim(); }).filter(function (x) { return x; });
+            if (segs2.length) return segs2.join('\n');
+        }
+        // ③ get_transcript: "text":"..."
         const m = s.match(/"text":"((?:[^"\\]|\\.)*)"/g);
         if (m && m.length) return m.map(x => x.replace(/^"text":"/, '').replace(/"$/, '').replace(/\\"/g, '"')).join('\n');
         return s;
