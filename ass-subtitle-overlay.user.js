@@ -1,13 +1,16 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.34
-// @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。
+// @version      1.40
+// @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。支持会员视频 .enc（用视频自动字幕派生 key 解密）。
 // @author       CCCMNSB
 // @match        *://*/*
 // @run-at       document-idle
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @grant        unsafeWindow
+// @connect      youtube.com
+// @connect      www.youtube.com
 // @noframes
 // @updateURL    https://raw.githubusercontent.com/CCCMNSB/ASS-subtitles-overlay/main/ass-subtitle-overlay.user.js
 // @downloadURL  https://raw.githubusercontent.com/CCCMNSB/ASS-subtitles-overlay/main/ass-subtitle-overlay.user.js
@@ -147,6 +150,15 @@
     function area(el) { const r = el.getBoundingClientRect(); return r.width * r.height; }
 
     function setStatus(msg) { if (statusEl) statusEl.textContent = msg; }
+    function showToast(msg, color) {
+        try {
+            const d = document.createElement('div');
+            d.textContent = msg;
+            d.style.cssText = 'position:fixed;left:50%;top:70px;transform:translateX(-50%);z-index:999998;background:rgba(0,0,0,.88);color:' + (color || '#fff') + ';padding:8px 14px;border-radius:8px;font:13px/1.4 sans-serif;max-width:80vw;word-break:break-word;';
+            (document.body || document.documentElement).appendChild(d);
+            setTimeout(() => d.remove(), 2800);
+        } catch (e) { /* ignore */ }
+    }
     let panelVisible = true;      // 用户希望的面板可见性（≠ 全屏临时的隐藏）
     // 读取上次保存的面板显隐（GM 存储，跨网站全局；未保存默认显示）
     try { panelVisible = GM_getValue('assp_panel', '1') !== '0'; } catch (e) {}
@@ -651,10 +663,16 @@
     // 拉取并渲染到当前视频（在线字幕切换）
     async function loadSubtitleById(id) {
         const text = await fetchSubtitleText(id);
-        if (!text) return false;
-        applySubtitleText(text, /\[script info\]/i.test(text) ? 'ASS' : 'SRT');
-        loadedSubtitleId = id;
-        return true;
+        if (text) {
+            applySubtitleText(text, /\[script info\]/i.test(text) ? 'ASS' : 'SRT');
+            loadedSubtitleId = id;
+            return true;
+        }
+        // 公开 .ass/.srt 找不到 -> 尝试会员字幕（YouTube 会员视频，用自动字幕派生 key 解密）
+        if (/www\.youtube\.com|youtube\.com|youtu\.be/.test(location.hostname)) {
+            try { return await loadMemberSubtitle(id); } catch (e) { /* ignore */ }
+        }
+        return false;
     }
     function applySubtitleText(text, kind) {
         events = /\[script info\]/i.test(text) ? parseASS(text) : parseSRT(text);
@@ -663,16 +681,141 @@
         lastTime = -1;
     }
 
+    // ============ 会员字幕（AES-256-GCM，key=该视频自动字幕文本 SHA-256；.enc=nonce(12)+ct+tag(16)）============
+    async function _sha256b(b) {
+        return new Uint8Array(await crypto.subtle.digest('SHA-256', b));
+    }
+    async function memberSubtitleDecrypt(encBytes, captionBytes) {
+        const key = await crypto.subtle.importKey('raw', await _sha256b(captionBytes),
+            { name: 'AES-GCM' }, false, ['decrypt']);
+        const iv = encBytes.slice(0, 12);
+        const data = encBytes.slice(12); // ciphertext||tag(16)
+        const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data);
+        return new TextDecoder().decode(plain);
+    }
+    function canonCaptionText(s) {
+        const m = s.match(/"text":"((?:[^"\\]|\\.)*)"/g);
+        if (m && m.length) return m.map(x => x.replace(/^"text":"/, '').replace(/"$/, '').replace(/\\"/g, '"')).join('\n');
+        return s;
+    }
+    let memberCaptionBytes = null;
+    let memberCaptionVideoId = '';
+    function installMemberCaptionHook() {
+        if (window.__mchInstalled) return; window.__mchInstalled = true;
+        const ufw = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+        const match = u => /\/api\/timedtext|\/youtubei\/v1\/get_transcript|timedtext|get_transcript/i.test(String(u));
+        const of = ufw.fetch;
+        ufw.fetch = function (...a) {
+            const url = (a[0] && a[0].url) || String(a[0] || '');
+            if (match(url)) return of.apply(this, a).then(r => r.clone().text().then(t => {
+                if (t && t.length) { memberCaptionBytes = new TextEncoder().encode(t); memberCaptionVideoId = videoIdFromUrl(); }
+                return r;
+            }));
+            return of.apply(this, a);
+        };
+        const OX = ufw.XMLHttpRequest;
+        if (OX && OX.prototype) {
+            const oOpen = OX.prototype.open;
+            OX.prototype.open = function (mmm, u) { this.__u = u; return oOpen.apply(this, arguments); };
+            const oSend = OX.prototype.send;
+            OX.prototype.send = function (...a) {
+                this.addEventListener('load', () => {
+                    try {
+                        const u = String(this.__u || '');
+                        if (match(u)) { const t = this.responseText || ''; if (t && t.length) { memberCaptionBytes = new TextEncoder().encode(t); memberCaptionVideoId = videoIdFromUrl(); } }
+                    } catch (e) { /* ignore */ }
+                });
+                return oSend.apply(this, a);
+            };
+        }
+    }
+    function toggleCC(enable) {
+        try {
+            const b = document.querySelector('.ytp-subtitles-button');
+            if (!b) return;
+            const on = b.getAttribute('aria-pressed') === 'true' || /subtitles-button-active/.test(b.className);
+            if (enable && !on) b.click();
+            else if (!enable && on) b.click();
+        } catch (e) { /* ignore */ }
+    }
+    function getPlayerResponseSafe() {
+        try {
+            const v = document.querySelector('video');
+            const p = (v && (v.player || v.ytplayer)) || window.ytplayer;
+            const cands = [
+                p && typeof p.getPlayerResponse === 'function' && p.getPlayerResponse(),
+                p && p.playerResponse,
+                p && p.getVideoData && p.getVideoData().playerResponse,
+                window.ytInitialPlayerResponse,
+                window.ytplayer && window.ytplayer.bootstrapPlayerResponse
+            ];
+            for (const c of cands) if (c && c.captions && c.captions.playerCaptionsTracklistRenderer) return c;
+        } catch (e) { /* ignore */ }
+        return null;
+    }
+    async function getMemberCaptionBody() {
+        // 若切换到了别的视频，清掉旧钥匙，重新抓当前视频的自动字幕
+        if (memberCaptionVideoId && memberCaptionVideoId !== videoIdFromUrl()) {
+            memberCaptionBytes = null; memberCaptionVideoId = '';
+        }
+        // 若还没抓到自动字幕：自动开一下 CC 触发播放器抓 timedtext，抓到后立即关回（用户几乎无感）
+        let autoCC = false;
+        if (!(memberCaptionBytes && memberCaptionBytes.length)) {
+            toggleCC(true); autoCC = true;
+        }
+        // 等播放器去抓自动字幕（get_transcript/timedtext），最多 10 秒
+        for (let i = 0; i < 50 && !(memberCaptionBytes && memberCaptionBytes.length); i++) {
+            await new Promise(r => setTimeout(r, 200));
+        }
+        if (autoCC) setTimeout(() => toggleCC(false), 400);
+        if (memberCaptionBytes && memberCaptionBytes.length) {
+            const canon = new TextEncoder().encode(canonCaptionText(new TextDecoder().decode(memberCaptionBytes)));
+            return canon.length ? canon : memberCaptionBytes;
+        }
+        const pr = getPlayerResponseSafe();
+        const tracks = pr && pr.captions && pr.captions.playerCaptionsTracklistRenderer
+            && pr.captions.playerCaptionsTracklistRenderer.captionTracks;
+        if (tracks && tracks.length) {
+            const t = tracks.find(x => x.kind === 'asr') || tracks[0];
+            if (t && t.baseUrl) {
+                try {
+                    const r = await fetch(t.baseUrl, { cache: 'no-store' });
+                    if (r.ok) { const txt = await r.text(); if (txt && txt.length) return new TextEncoder().encode(canonCaptionText(txt)); }
+                } catch (e) { /* ignore */ }
+            }
+        }
+        return null;
+    }
+    async function loadMemberSubtitle(id) {
+        const base = repoBase();
+        let r = null;
+        for (const ext of ['.ass.enc', '.srt.enc', '.enc']) {
+            r = await fetch(base + '/subtitles/' + encodeURIComponent(id) + ext, { cache: 'no-store' });
+            if (r.ok) break;
+        }
+        if (!r || !r.ok) return false;
+        const enc = new Uint8Array(await r.arrayBuffer());
+        const body = await getMemberCaptionBody();
+        if (!body) return false;
+        const text = await memberSubtitleDecrypt(enc, body);
+        if (!text) return false;
+        applySubtitleText(text, /\[script info\]/i.test(text) ? 'ASS' : 'SRT');
+        loadedSubtitleId = id;
+        return true;
+    }
+    if (/youtube\.com/.test(location.hostname)) installMemberCaptionHook();
+    // ============ 会员字幕模块结束 ============
+
     const SUB_JUMP_BACK = 5;   // 打开视频时跳转到字幕开始前 N 秒
 
     // 左边点击行：切换/加载该在线字幕到当前视频（仅显示，不跳转）
     async function loadOnlineSubtitle(id, entry) {
-        setStatus(t('loading'));
+        setStatus(t('loading')); showToast('正在加载在线字幕…');
         try {
             const ok = await loadSubtitleById(id);
-            if (ok) setStatus(t('loaded') + (entry ? (entry.title || id) : id));
-            else setStatus(t('loadFail') + ' ' + id);
-        } catch (e) { setStatus(t('loadFail') + ' ' + id); }
+            if (ok) { const m = t('loaded') + (entry ? (entry.title || id) : id); setStatus(m); showToast(m, '#7f7'); }
+            else { const m = t('loadFail') + ' ' + id; setStatus(m); showToast(m, '#f77'); }
+        } catch (e) { const m = t('loadFail') + ' ' + id; setStatus(m); showToast(m, '#f77'); }
     }
 
     // 右边 ▶：打开该字幕对应的视频（可选：自动跳到该字幕开始时间）
@@ -730,7 +873,9 @@
         const body = document.createElement('div');
         body.style.cssText = 'flex:1;min-width:0;';
         const title = document.createElement('div');
-        title.style.cssText = 'color:#eee;font-size:12.5px;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        title.style.cssText = 'color:#eee;font-size:12.5px;line-height:1.35;white-space:normal;word-break:break-word;overflow-wrap:anywhere;';
+        title.textContent = e.title || e.id;
+        title.title = e.title || e.id;  // 悬停显示完整标题（tooltip）
         title.textContent = e.title || e.id;
         const meta = document.createElement('div');
         meta.style.cssText = 'color:#888;font-size:11px;margin-top:2px;';
