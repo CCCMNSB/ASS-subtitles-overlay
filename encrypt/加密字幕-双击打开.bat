@@ -1,2 +1,2 @@
 @echo off
-start "" pythonw "%~dp0encrypt-member-gui.pyw"
+start "" pythonw "%~dp0encrypt.py"
