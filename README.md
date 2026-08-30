@@ -88,11 +88,20 @@
 
 给 YouTube **会员专属视频**做字幕后，若不想把字幕公开（版权考虑），可**加密储存**，只有**能播放该会员视频的人**才能解密显示。
 
-**原理**：密钥 = **该视频自动字幕文本的 SHA-256**。只有会员在浏览器里能拿到该视频的自动字幕，所以只有会员能算出密钥——非会员/非浏览器拿不到自动字幕，就解不开。这是**访问控制 + 编码**，不是 DRM（拿到密钥的人仍可能复制文本）。
+**「钥匙」是什么**：**不是单独的一个文件**。它 = **该视频自动字幕文本的 SHA-256**（从视频自动字幕算出来）。做字幕时你拿一次"该视频自动字幕文本"作钥匙加密；观众播放时插件自动拿"同一视频自动字幕文本"算出同一把钥匙解密。**一个视频一把钥匙**。
 
-**加密（作者，本地一次性，不发布给用户）**
-1. 会员视频页点面板的**「下载钥匙」**→ 得到 `caption_body_<视频ID>.json`（该视频自动字幕）。
-2. 用加密工具 `encrypt-member-gui.py`（或 `encrypt-member.js`）：选 `caption_body_*.json` + 你的 `.ass` → 输出 `<视频ID>.ass.enc`。密钥 = SHA-256(自动字幕文本)，`nonce(12)+ciphertext+tag(16)` AES-256-GCM。
+**只有会员能解**：只有会员浏览器能拿到该视频自动字幕 → 才能算出钥匙 → 才能解。非会员/非浏览器拿不到自动字幕 → 解不开。这是**访问控制 + 编码**，不是 DRM（拿到钥匙的人仍可能复制文本）。
+
+**下载**
+- **观众**（只装主脚本）：`ass-subtitle-overlay.user.js`
+  👉 https://raw.githubusercontent.com/CCCMNSB/ASS-subtitles-overlay/main/ass-subtitle-overlay.user.js
+- **作者工具**（抓钥匙 + 加密，给字幕作者，不发布给观众）：打包在 GitHub Release
+  👉 https://github.com/CCCMNSB/ASS-subtitles-overlay/releases/download/v1.40-tools/member-subtitle-tools.zip
+  内含：`capture-subtitle-key.user.js`（抓钥匙）、`encrypt-member-gui.py`（图形界面加密）、`encrypt-member.js`（命令行）、`加密字幕-双击打开.bat`（双击启动图形界面）。
+
+**加密（作者，本地一次性）**
+1. 装 `capture-subtitle-key.user.js` → 打开会员视频页 → 点面板**「下载钥匙」**→ 得到 `caption_body_<视频ID>.json`（该视频自动字幕文本，即钥匙）。
+2. 双击 `加密字幕-双击打开.bat`（或 `python encrypt-member-gui.py`）：选 `caption_body_*.json` + 你的 `.ass` → 输出 `<视频ID>.ass.enc`（AES-256-GCM，`nonce(12)+ciphertext+tag(16)`）。
 3. 把 `<视频ID>.ass.enc` 上传到字幕仓库 `subtitles/`。可加进 `index.json`（公开列表）或**不加**（隐藏）。
 
 **解密（观众/播放，全自动，不碰 CC）**
