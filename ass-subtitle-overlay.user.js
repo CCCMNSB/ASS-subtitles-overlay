@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.40
+// @version      1.41
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。支持会员视频 .enc（用视频自动字幕派生 key 解密）。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -102,6 +102,18 @@
         subTextCache = {};
         saveSetting('assp_fontScale', 55); saveSetting('assp_borderPx', 0); saveSetting('assp_offsetPct', 0); saveSetting('assp_assBg', '1'); saveSetting('assp_autoJump', '1');
         invalidate();
+    }
+
+    // 一键清除字幕缓存：内容缓存 + 索引缓存 + 当前已加载字幕
+    function clearSubtitleCache() {
+        try {
+            subTextCache = {};
+            repoCache = { etag: null, data: null, ts: 0, repo: subtitleRepo };
+            loadedSubtitleId = null;
+            active = false; events = [];
+            if (typeof overlay !== 'undefined' && overlay) overlay.style.display = 'none';
+            showToast('已清除字幕缓存');
+        } catch (e) { showToast('清除字幕缓存失败', '#f77'); }
     }
 
     const I18N = {
@@ -423,6 +435,12 @@
         bReset.style.width = '100%';
         bReset.style.marginTop = '8px';
         box.appendChild(bReset);
+
+        // 清除字幕缓存（内容/索引/当前字幕）
+        const bClear = mkBtn('清除字幕缓存', '#607d8b', clearSubtitleCache);
+        bClear.style.width = '100%';
+        bClear.style.marginTop = '6px';
+        box.appendChild(bClear);
 
         return box;
     }
