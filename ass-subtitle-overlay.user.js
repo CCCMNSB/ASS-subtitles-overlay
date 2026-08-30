@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.42
+// @version      1.43
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。支持会员视频 .enc（用视频自动字幕派生 key 解密）。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -1206,30 +1206,43 @@
             }
             a.baseY = y;
         }
-        // ③ 垂直堆叠规避：从底往上，避免重叠。
-        //    - \pos 绝对定位的行：保持原位置，仅作为"已占位"让其它行避开。
-        //    - 其余行：若与任何已占用区间重叠，则往上移，直到不重叠（从底往上堆叠）。
+        // ③ 垂直堆叠规避（位置稳定：先出现者先定住，后出现者避让）。
+        //    - \pos 绝对定位行：固定，仅占位。
+        //    - 普通行：首次出现时算好位置并缓存到 e._stackY；存活期间复用缓存，不因其它行消失/新增而重排。
+        //    先清掉本帧已消失（不 active）行的缓存，下次出现再重新定。
+        for (const e of events) {
+            const active = (now >= e.startMs && now < e.endMs);
+            if (!active && e._stackY !== undefined) { delete e._stackY; }
+        }
         const occupied = [];   // {top,bottom} 已占用的垂直区间
         function overlaps(top, bottom) {
             for (const o of occupied) if (top < o.bottom && bottom > o.top) return true;
             return false;
         }
-        // 先放置绝对定位(\pos)行（不动它），占位；再处理其余行。
-        // 排序：其余行按"底部在上者优先"——即 y 大（靠下）的先放，保证从底往上堆。
-        const fixed = act.filter(a => a.e.hasPos);
-        const free = act.filter(a => !a.e.hasPos);
-        for (const a of fixed) {
-            a.finalY = a.baseY;
-            occupied.push({ top: a.baseY, bottom: a.baseY + a.blockH });
+        // a) 先放置 \pos 绝对定位行 + 已缓存行（它们位置固定）
+        for (const a of act) {
+            if (a.e.hasPos) {
+                a.finalY = a.baseY; a.e._stackY = a.finalY;
+                occupied.push({ top: a.finalY, bottom: a.finalY + a.blockH });
+            } else if (a.e._stackY !== undefined) {
+                a.finalY = a.e._stackY;
+                occupied.push({ top: a.finalY, bottom: a.finalY + a.blockH });
+            }
         }
-        free.sort(function (a, b) { return b.baseY - a.baseY; });  // 底部(row 大)优先
-        for (const a of free) {
+        // b) 只处理"首次出现、还没缓存"的普通行（从底往上避让，算好即缓存）
+        const newOnes = act.filter(a => !a.e.hasPos && a.e._stackY === undefined);
+        newOnes.sort(function (a, b) { return b.baseY - a.baseY; });  // 底部(row 大)优先
+        for (const a of newOnes) {
             let y = a.baseY;
-            // 往上挪直至不与任何已占用重叠；若到顶仍重叠，则回退到 baseY（保底，不无限上移）
             while (overlaps(y, y + a.blockH) && y > 0) { y -= 8; }
-            if (overlaps(y, y + a.blockH)) y = a.baseY;   // 无法完全避开则用原位置
+            if (overlaps(y, y + a.blockH)) y = a.baseY;   // 无法完全避开则用锚点位置
             a.finalY = Math.max(0, Math.min(y, h - a.blockH));
+            a.e._stackY = a.finalY;   // 缓存，存活期固定
             occupied.push({ top: a.finalY, bottom: a.finalY + a.blockH });
+        }
+        // c) 兜底：本帧 active 但（理论上都会有）没 finalY 的，回退锚点
+        for (const a of act) {
+            if (a.finalY === undefined) { a.finalY = a.baseY; }
         }
         // ④ 渲染
         for (const a of act) {
