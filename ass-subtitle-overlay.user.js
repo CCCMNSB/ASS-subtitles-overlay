@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.43
+// @version      1.44
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。支持会员视频 .enc（用视频自动字幕派生 key 解密）。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -1229,16 +1229,38 @@
                 occupied.push({ top: a.finalY, bottom: a.finalY + a.blockH });
             }
         }
-        // b) 只处理"首次出现、还没缓存"的普通行（从底往上避让，算好即缓存）
+        // b) 只处理"首次出现、还没缓存"的普通行（按锚点方向避让，算好即缓存）
         const newOnes = act.filter(a => !a.e.hasPos && a.e._stackY === undefined);
         newOnes.sort(function (a, b) { return b.baseY - a.baseY; });  // 底部(row 大)优先
         for (const a of newOnes) {
+            const bH = a.blockH;
+            const align = a.e.alignment;
             let y = a.baseY;
-            while (overlaps(y, y + a.blockH) && y > 0) { y -= 8; }
-            if (overlaps(y, y + a.blockH)) y = a.baseY;   // 无法完全避开则用锚点位置
-            a.finalY = Math.max(0, Math.min(y, h - a.blockH));
+            // 方向：顶部锚(align>=7)往下避让；其余(底部/中间)往上避让
+            const downward = (align >= 7);
+            // 先试锚点位置
+            if (!overlaps(y, y + bH)) {
+                a.finalY = y;
+            } else if (downward) {
+                // 往下找（y 增大），贴近屏幕底方向；到 h-blockH 为止
+                let found = false;
+                for (let step = 8; step <= h && !found; step += 8) {
+                    const yy = Math.min(a.baseY + step, h - bH);
+                    if (!overlaps(yy, yy + bH)) { a.finalY = yy; found = true; }
+                }
+                if (!found) a.finalY = Math.max(0, Math.min(y, h - bH));
+            } else {
+                // 往上找（y 减小），贴近屏幕顶方向；到 0 为止
+                let found = false;
+                for (let step = 8; step <= h && !found; step += 8) {
+                    const yy = Math.max(a.baseY - step, 0);
+                    if (!overlaps(yy, yy + bH)) { a.finalY = yy; found = true; }
+                }
+                if (!found) a.finalY = Math.max(0, Math.min(y, h - bH));
+            }
+            a.finalY = Math.max(0, Math.min(a.finalY, h - bH));
             a.e._stackY = a.finalY;   // 缓存，存活期固定
-            occupied.push({ top: a.finalY, bottom: a.finalY + a.blockH });
+            occupied.push({ top: a.finalY, bottom: a.finalY + bH });
         }
         // c) 兜底：本帧 active 但（理论上都会有）没 finalY 的，回退锚点
         for (const a of act) {
