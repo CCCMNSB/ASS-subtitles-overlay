@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.41
+// @version      1.42
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。支持会员视频 .enc（用视频自动字幕派生 key 解密）。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -1176,6 +1176,8 @@
         overlay.textContent = '';
         const h = rect.height, w = rect.width;
         if (!h || !w) return;
+        // ① 收集本时刻所有 active 事件
+        const act = [];
         for (const e of events) {
             if (now < e.startMs || now >= e.endMs) continue;
             const size = Math.max(12, h * e.fontSize * (settings.fontScale / 100));
@@ -1183,19 +1185,55 @@
             const lines = e.text.split('\n');
             const blockH = lines.length * lineH;
             const mod = e.alignment % 3;
+            const offPx = settings.offsetPct / 100 * h;   // 上下偏移（按视频高度）
+            act.push({ e, size, lineH, lines, blockH, mod, offPx });
+        }
+        // ② 计算每条的基础 y（含 \pos 锚点/样式锚点），并区分是否绝对定位
+        for (const a of act) {
+            const e = a.e;
             let y;
             if (e.hasPos) {
-                const yA = e.posY / playResH * h;   // \pos：垂直锚点（按对齐方式）
-                if (e.alignment <= 3) y = Math.max(0, yA - blockH);
-                else if (e.alignment >= 7) y = Math.min(h - blockH, yA);
-                else y = yA - blockH / 2;
-                y = Math.max(0, Math.min(y, h - blockH));
+                const yA = e.posY / playResH * h;
+                if (e.alignment <= 3) y = Math.max(0, yA - a.blockH);
+                else if (e.alignment >= 7) y = Math.min(h - a.blockH, yA);
+                else y = yA - a.blockH / 2;
+                y = Math.max(0, Math.min(y, h - a.blockH));
             } else {
-                if (e.alignment <= 3) y = Math.max(0, h * e.yFrac - blockH);
-                else if (e.alignment >= 7) y = Math.min(h - blockH, h * e.yFrac);
-                else y = h * e.yFrac - blockH / 2;
-                y = Math.max(0, Math.min(y, h - blockH));
+                if (e.alignment <= 3) y = Math.max(0, h * e.yFrac - a.blockH);
+                else if (e.alignment >= 7) y = Math.min(h - a.blockH, h * e.yFrac);
+                else y = h * e.yFrac - a.blockH / 2;
+                y = Math.max(0, Math.min(y, h - a.blockH));
             }
+            a.baseY = y;
+        }
+        // ③ 垂直堆叠规避：从底往上，避免重叠。
+        //    - \pos 绝对定位的行：保持原位置，仅作为"已占位"让其它行避开。
+        //    - 其余行：若与任何已占用区间重叠，则往上移，直到不重叠（从底往上堆叠）。
+        const occupied = [];   // {top,bottom} 已占用的垂直区间
+        function overlaps(top, bottom) {
+            for (const o of occupied) if (top < o.bottom && bottom > o.top) return true;
+            return false;
+        }
+        // 先放置绝对定位(\pos)行（不动它），占位；再处理其余行。
+        // 排序：其余行按"底部在上者优先"——即 y 大（靠下）的先放，保证从底往上堆。
+        const fixed = act.filter(a => a.e.hasPos);
+        const free = act.filter(a => !a.e.hasPos);
+        for (const a of fixed) {
+            a.finalY = a.baseY;
+            occupied.push({ top: a.baseY, bottom: a.baseY + a.blockH });
+        }
+        free.sort(function (a, b) { return b.baseY - a.baseY; });  // 底部(row 大)优先
+        for (const a of free) {
+            let y = a.baseY;
+            // 往上挪直至不与任何已占用重叠；若到顶仍重叠，则回退到 baseY（保底，不无限上移）
+            while (overlaps(y, y + a.blockH) && y > 0) { y -= 8; }
+            if (overlaps(y, y + a.blockH)) y = a.baseY;   // 无法完全避开则用原位置
+            a.finalY = Math.max(0, Math.min(y, h - a.blockH));
+            occupied.push({ top: a.finalY, bottom: a.finalY + a.blockH });
+        }
+        // ④ 渲染
+        for (const a of act) {
+            const e = a.e, y = a.finalY, size = a.size, lineH = a.lineH, lines = a.lines, mod = a.mod, offPx = a.offPx;
             const el = document.createElement('div');
             let stroke = Math.max(1.5, e.outlineW * h * 2);
             if (settings.borderPx > 0) stroke = Math.max(1.5, settings.borderPx);
@@ -1215,7 +1253,6 @@
                 + '-webkit-text-stroke:' + stroke + 'px ' + e.outline + ';'
                 + 'paint-order:stroke fill;';
             if (bg) css += 'background:' + assColorA(e.backColour) + ';padding:2px 6px;border-radius:2px;';
-            const offPx = settings.offsetPct / 100 * h;   // 上下偏移（按视频高度）
             let transform;
             if (e.hasPos) {
                 const xA = e.posX / playResW * w;   // \pos：水平锚点（按对齐方式）
