@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.50
+// @version      1.51
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。支持会员视频 .enc（用视频自动字幕派生 key 解密）。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -704,13 +704,25 @@
     }
 
     // 拉取 index/index.json：平时 no-cache（没变→304 空回应低压力、变了→200 实时）；刷新带时间戳+no-store 强制取最新
+    // 归一化 index：扁平数组原样返回；列式 {schema,rows} -> [{id,title,date,list,author}...]（两端兼容）
+    function normalizeIndex(data) {
+        if (Array.isArray(data)) return data;
+        if (data && Array.isArray(data.schema) && Array.isArray(data.rows)) {
+            return data.rows.map(function (row) {
+                const o = {};
+                data.schema.forEach(function (k, i) { o[k] = Array.isArray(row) ? row[i] : undefined; });
+                return o;
+            });
+        }
+        return data;
+    }
     async function fetchRepoList(force) {
         let url = repoBase() + '/index/index.json';
         if (force) url += (url.indexOf('?') >= 0 ? '&' : '?') + '_=' + Date.now();   // 刷新：时间戳绕过浏览器/边缘缓存
         const res = await fetch(url, { cache: force ? 'no-store' : 'no-cache' });
         if (res.status === 304 && repoCache.data) { repoCache.ts = Date.now(); return repoCache.data; }
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        const data = await res.json();
+        const data = normalizeIndex(await res.json());
         repoCache.repo = subtitleRepo;
         repoCache.data = data;
         repoCache.ts = Date.now();
