@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.52
+// @version      1.53
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。支持会员视频 .enc（用视频自动字幕派生 key 解密）。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -963,7 +963,11 @@
         if (!m) return -1;
         var y = +m[1], mo = +m[2], day = +m[3];
         if (mo < 1 || mo > 12 || day < 1 || day > 31) return -1;
-        return Date.UTC(y, mo - 1, day);
+        var ms = Date.UTC(y, mo - 1, day);
+        // 溢出校验（如 2026-02-30 会被 Date.UTC 滚动到 2026-03-02）：回读不一致则判无效，与 App 端 LocalDate.of 对齐
+        var dt = new Date(ms);
+        if (dt.getUTCFullYear() !== y || (dt.getUTCMonth() + 1) !== mo || dt.getUTCDate() !== day) return -1;
+        return ms;
     }
     function isBV(id) { return /^BV[A-Za-z0-9]{10}$/.test(String(id || '')); }
     function collectionMeta(c) {
