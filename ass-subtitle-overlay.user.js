@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.51
+// @version      1.52
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。支持会员视频 .enc（用视频自动字幕派生 key 解密）。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -957,7 +957,14 @@
 
     // ---------- 在线字幕列表渲染（分页）----------
     function clearOnlineList() { while (onlineListEl && onlineListEl.firstChild) onlineListEl.removeChild(onlineListEl.firstChild); }
-    function dateKey(d) { var s = String(d || ''); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '0000-00-00'; }
+    // 日期 -> 毫秒（任意位年；用数值比较，避免 5 位年按字符串排错；无效返回 -1）
+    function dateMs(d) {
+        var m = /^(\d+)-(\d{2})-(\d{2})$/.exec(String(d || ''));
+        if (!m) return -1;
+        var y = +m[1], mo = +m[2], day = +m[3];
+        if (mo < 1 || mo > 12 || day < 1 || day > 31) return -1;
+        return Date.UTC(y, mo - 1, day);
+    }
     function isBV(id) { return /^BV[A-Za-z0-9]{10}$/.test(String(id || '')); }
     function collectionMeta(c) {
         const count = uiLang === 'zh' ? c.count + ' 集' : c.count + ' items';
@@ -1017,11 +1024,11 @@
         });
         return order.map(function (k) {
             const c = map[k];
-            c.items.sort(function (a, b) { var da = dateKey(a.date), db = dateKey(b.date); return db < da ? -1 : db > da ? 1 : 0; });
+            c.items.sort(function (a, b) { return b._dateMs - a._dateMs; });   // 最新在前（数值，支持任意位年；无效 -1 排最后）
             c.count = c.items.length;
-            let latest = '0000-00-00';
-            c.items.forEach(function (e) { var d = dateKey(e.date); if (d > latest) latest = d; });
-            c.latestDate = latest === '0000-00-00' ? '' : latest;
+            let latestStr = ''; let latestMs = -1;
+            c.items.forEach(function (e) { if (e._dateMs > latestMs) { latestMs = e._dateMs; latestStr = e.date || ''; } });
+            c.latestDate = latestStr;
             c.coverId = c.items.length ? c.items[0].id : null;   // 最新成员 id 作封面
             return c;
         });
@@ -1033,8 +1040,9 @@
             e._tl = String(e.title || '').toLowerCase();
             e._il = String(e.id || '').toLowerCase();
             e._al = String(e.author || '').toLowerCase();
+            e._dateMs = dateMs(e.date);   // 预计算排序用数值
         });
-        arr.sort(function (a, b) { var da = dateKey(a.date), db = dateKey(b.date); return db < da ? -1 : db > da ? 1 : 0; });
+        arr.sort(function (a, b) { return b._dateMs - a._dateMs; });   // 最新在前；无效(-1)排最后
         return arr;
     }
     function videoList() {
