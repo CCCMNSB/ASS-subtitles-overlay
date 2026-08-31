@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.49
+// @version      1.50
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。支持会员视频 .enc（用视频自动字幕派生 key 解密）。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -981,7 +981,8 @@
         if (pic) biliCoverCache[bvid] = pic;
         return pic;
     }
-    // 给 <img> 设封面：YouTube 直接 i.ytimg；B站走 API。加载失败/被墙 -> onerror 隐藏图，露出占位符（兜底）
+    // 给 <img> 设封面：YouTube 直接 <img src=i.ytimg>；B站先查 API 拿图 URL 再 <img src>。
+    // 图片用 <img src> 直连（不经 GM）——不会触发跨域确认弹窗；代价是 GitHub 等严格 CSP 站被 img-src 拦截时显示占位符（视频站点不受影响）。
     function setCover(imgEl, videoId) {
         if (!videoId || !imgEl) return;
         imgEl.onerror = function () { imgEl.style.display = 'none'; };
@@ -1014,23 +1015,34 @@
         });
     }
     // 视频列表：全部 tab 或某合集详情（含搜索过滤）
+    // 预处理：预计算每条的小写字段（免去每次搜索重复 toLowerCase），并按日期缓存一次排序（此后过滤保持顺序，不再每次 sort）
+    function prepData(arr) {
+        arr.forEach(function (e) {
+            e._tl = String(e.title || '').toLowerCase();
+            e._il = String(e.id || '').toLowerCase();
+            e._al = String(e.author || '').toLowerCase();
+        });
+        arr.sort(function (a, b) { var da = dateKey(a.date), db = dateKey(b.date); return db < da ? -1 : db > da ? 1 : 0; });
+        return arr;
+    }
     function videoList() {
         const q = (onlineSearch ? onlineSearch.value : '').trim().toLowerCase();
-        return onlineData.slice()
-            .filter(function (e) {
-                if (activeCollection != null && (String(e.list || '').trim() || '') !== activeCollection) return false;
-                return !q || (String(e.id) + ' ' + String(e.title || '')).toLowerCase().indexOf(q) >= 0;
-            })
-            .sort(function (a, b) { var da = dateKey(a.date), db = dateKey(b.date); return db < da ? -1 : db > da ? 1 : 0; });
+        return onlineData.filter(function (e) {
+            if (activeCollection != null && (String(e.list || '').trim() || '') !== activeCollection) return false;
+            if (!q) return true;
+            // 标题/作者用子串匹配（不用太精准）；ID 用精准匹配（整段相等），避免输入几个字符就命中大量无关项
+            return e._tl.indexOf(q) >= 0 || (e._al || '').indexOf(q) >= 0 || e._il === q;
+        });
     }
-    // 合集列表（含搜索：匹配合集名或任一成员标题/id）
+    // 合集列表（含搜索：合集名/成员作者子串匹配；成员 ID 精准匹配）
     function collectionList() {
         const q = (onlineSearch ? onlineSearch.value : '').trim().toLowerCase();
         if (!collectionsCache) collectionsCache = groupByCollection(onlineData);   // 分组只算一次，复用
         return collectionsCache.filter(function (c) {
             if (!q) return true;
-            // 只按合集名搜；避免命中成员视频的随机 id/标题，导致输入单个字母就冒出大量"无关"合集
-            return String(c.name || '').toLowerCase().indexOf(q) >= 0;
+            if (String(c.name || '').toLowerCase().indexOf(q) >= 0) return true;   // 合集名子串
+            if (c.items.some(function (e) { return (e._al || '').indexOf(q) >= 0; })) return true;  // 成员作者子串
+            return c.items.some(function (e) { return e._il === q; });   // 成员 ID 精准
         });
     }
     function isCollectionCardView() { return onlineTab === 'collections' && activeCollection == null; }
@@ -1069,7 +1081,7 @@
         title.title = e.title || e.id;  // 悬停显示完整标题（tooltip）
         const meta = document.createElement('div');
         meta.style.cssText = 'color:#888;font-size:11px;margin-top:2px;';
-        meta.textContent = e.id + ' · ' + (e.date || '');
+        meta.textContent = (e.author ? e.author + ' · ' : '') + e.id + ' · ' + (e.date || '');
         body.appendChild(title); body.appendChild(meta);
         const play = document.createElement('button');
         play.type = 'button';
@@ -1157,14 +1169,20 @@
         setStatus(t('loading'));
         if (onlineRefs.bRefresh) { onlineRefs.bRefresh.disabled = true; onlineRefs.bRefresh.textContent = '…'; }
         try {
-            onlineData = await fetchRepoList(force);
+            onlineData = prepData(await fetchRepoList(force));
             collectionsCache = null;    // 索引更新，合集分组下次再算
             onlinePage = 0;
-            // 重置到"全部"tab；清单无任何 list 字段则隐藏"合集"tab（优雅降级，行为同原单列表）
-            onlineTab = 'videos';
-            activeCollection = null;
+            // 保留当前 tab（刷新不跳回"全部"）；仅当清单无任何 list 字段才隐藏"合集"tab 并强制"全部"
             const hasCol = onlineData.some(function (e) { return String(e.list || '').trim(); });
             if (onlineRefs.tabRow) onlineRefs.tabRow.style.display = hasCol ? 'flex' : 'none';
+            if (!hasCol) {
+                onlineTab = 'videos';
+                activeCollection = null;
+            } else if (activeCollection != null) {
+                // 正处的合集已不存在（数据更新），退回合集列表
+                const still = onlineData.some(function (e) { return (String(e.list || '').trim() || '') === activeCollection; });
+                if (!still) activeCollection = null;
+            }
             updateOnlineTabs();
             renderOnlineList();
             setStatus((uiLang === 'zh' ? '共 ' : 'Total ') + onlineData.length + ' 条');
