@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.53
+// @version      1.54
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。支持会员视频 .enc（用视频自动字幕派生 key 解密）。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -61,6 +61,8 @@
     const onlineRefs = {};                              // 在线字幕界面引用
     let onlineData = [];                                // 拉取的索引列表
     let collectionsCache = null;                        // 合集分组缓存（onlineData 变化时重建）
+    let wasSearching = false;                           // 搜索框当前是否非空
+    let searchStartPage = -1;                           // 开始搜索前的页码（清空时还原）
     let onlineSearchTimer = null;                       // 搜索框防抖计时器
     let onlinePage = 0;                                 // 当前已渲染的页
     let onlineTab = 'videos';                           // 'videos' | 'collections'
@@ -1091,6 +1093,7 @@
         onlineTab = tab;
         activeCollection = null;
         onlinePage = 0;
+        wasSearching = false; searchStartPage = -1;
         updateOnlineTabs();
         renderOnlineList();
     }
@@ -1152,6 +1155,17 @@
     }
     function renderOnlineList() {
         if (!onlineListEl) return;
+        // 搜索/清空过渡：开始搜索时记住当前页码并回到第 1 页；清空时还原搜索前的页码
+        const qNow = (onlineSearch ? onlineSearch.value : '').trim();
+        if (wasSearching && qNow === '') {
+            onlinePage = searchStartPage >= 0 ? searchStartPage : 0;
+            searchStartPage = -1;
+            wasSearching = false;
+        } else if (!wasSearching && qNow !== '') {
+            searchStartPage = onlinePage;
+            onlinePage = 0;
+            wasSearching = true;
+        }
         const cardView = isCollectionCardView();
         const detail = isCollectionDetail();
         if (onlineRefs.backRow) onlineRefs.backRow.style.display = detail ? 'flex' : 'none';
@@ -1196,6 +1210,7 @@
             onlineData = prepData(await fetchRepoList(force));
             collectionsCache = null;    // 索引更新，合集分组下次再算
             onlinePage = 0;
+            wasSearching = false; searchStartPage = -1;
             // 保留当前 tab（刷新不跳回"全部"）；仅当清单无任何 list 字段才隐藏"合集"tab 并强制"全部"
             const hasCol = onlineData.some(function (e) { return String(e.list || '').trim(); });
             if (onlineRefs.tabRow) onlineRefs.tabRow.style.display = hasCol ? 'flex' : 'none';
