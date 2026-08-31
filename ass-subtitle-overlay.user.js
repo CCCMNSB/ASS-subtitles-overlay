@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.56
+// @version      1.58
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。支持会员视频 .enc（用视频自动字幕派生 key 解密）。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -71,6 +71,29 @@
     const ONLINE_PAGE = 10;                             // 每页条数
     let autoLoadTried = false;                          // 是否已尝试自动匹配
     let loadedSubtitleId = null;                        // 当前已加载的在线字幕 id
+    // ---- 在线机翻弹幕（与字幕并存；仅用户点击才拉取；空响应优化 + 内存缓存 + 清理）----
+    let danmakuEvents = [];          // 当前已加载的弹幕事件（ASS 解析结果）
+    let danmakuActive = false;       // 显示/隐藏开关
+    let danmakuLoadedId = null;      // 当前已加载的弹幕 id
+    const danmakuCache = {};         // key -> {events, ts}（内存缓存）
+    const danmakuEmpty = {};         // key -> ts（该视频无弹幕文件，避免反复拉取；GM 持久化）
+    const DANMAKU_CACHE_MAX = 12;    // 内存缓存最多保留视频数（超出删最旧，LRU 按 ts）
+    const DANMAKU_EMPTY_MAX = 40;    // "无弹幕"记录最多保留数（防无限增长）
+    const DANMAKU_LIFETIME = 6 * 3600e3;  // 缓存距上次使用超过 6h 删除
+    try { const e = GM_getValue('assp_danmaku_empty', '{}'); const o = JSON.parse(e || '{}'); for (const k in o) danmakuEmpty[k] = +o[k] || 0; } catch (e) {}
+    function danmakuKey(id) { return subtitleRepo + '|' + id; }
+    function trimDanmakuCache() {
+        const now = Date.now();
+        const keys = Object.keys(danmakuCache).sort((a, b) => danmakuCache[a].ts - danmakuCache[b].ts);
+        while (keys.length > DANMAKU_CACHE_MAX) { const k = keys.shift(); delete danmakuCache[k]; }
+        for (const k of keys) if (now - danmakuCache[k].ts > DANMAKU_LIFETIME) delete danmakuCache[k];
+    }
+    function trimDanmakuEmpty() {
+        const now = Date.now();
+        const keys = Object.keys(danmakuEmpty).sort((a, b) => danmakuEmpty[a] - danmakuEmpty[b]);
+        while (keys.length > DANMAKU_EMPTY_MAX) { const k = keys.shift(); delete danmakuEmpty[k]; }
+        for (const k of keys) if (now - danmakuEmpty[k] > DANMAKU_LIFETIME) delete danmakuEmpty[k];
+    }
 
     // 用户可调设置
     const settings = {
@@ -79,7 +102,9 @@
         font: 'auto',     // 'auto'=跟随字幕字体；否则用指定字体名
         offsetPct: 0,     // 上下偏移（% of video height，负数=上移）
         assBg: true,      // 是否渲染 ASS 不透明背景（BorderStyle=3）
-        autoJump: true    // 打开视频时自动跳到字幕开始时间（默认开）
+        autoJump: true,   // 打开视频时自动跳到字幕开始时间（默认开）
+        danmakuFontScale: 100,   // 弹幕字号（%），与字幕字号分离，默认 100
+        danmakuShowOriginal: true // 在线弹幕是否显示原文（译文下面的原句），默认开
     };
     // 读取上次保存的字体选择（GM 存储，全局）
     try { const f = GM_getValue('assp_font', ''); if (f) settings.font = f; } catch (e) {}
@@ -90,11 +115,14 @@
     try { const n = GM_getValue('assp_offsetPct', ''); if (n !== '') settings.offsetPct = +n || 0; } catch (e) {}
     try { const n = GM_getValue('assp_assBg', ''); if (n !== '') settings.assBg = n === '1'; } catch (e) {}
     try { const n = GM_getValue('assp_autoJump', ''); if (n !== '') settings.autoJump = n === '1'; } catch (e) {}
+    try { const n = GM_getValue('assp_danmakuFontScale', ''); if (n !== '') settings.danmakuFontScale = +n || 100; } catch (e) {}
+    try { const n = GM_getValue('assp_danmakuShowOriginal', ''); if (n !== '') settings.danmakuShowOriginal = n === '1'; } catch (e) {}
     try { panelZoom = GM_getValue('assp_zoom', '') === '1'; } catch (e) {}   // 面板缩放状态
     // 实时生效：任何设置改动后把 lastTime 置回 -1，下一帧就重绘一次字幕
     function invalidate() { lastTime = -1; }
     function resetDefaults() {
         settings.fontScale = 55; settings.borderPx = 0; settings.font = 'auto'; settings.offsetPct = 0; settings.assBg = true; settings.autoJump = true;
+        settings.danmakuFontScale = 100; settings.danmakuShowOriginal = true;
         if (setRefs.sizeInput) setRefs.sizeInput.value = '55';
         if (setRefs.sizeVal) setRefs.sizeVal.value = '55%';
         if (setRefs.bdInput) setRefs.bdInput.value = '0';
@@ -106,6 +134,10 @@
         if (setRefs.offVal) setRefs.offVal.textContent = '0%';
         if (setRefs.bgCheck) setRefs.bgCheck.checked = true;
         if (setRefs.autoJumpCheck) setRefs.autoJumpCheck.checked = true;
+        if (setRefs.dmSizeInput) setRefs.dmSizeInput.value = '100';
+        if (setRefs.dmSizeVal) setRefs.dmSizeVal.value = '100%';
+        if (setRefs.dmShowOrigCheck) setRefs.dmShowOrigCheck.checked = true;
+        if (setRefs.dmSizeApply) setRefs.dmSizeApply(100);
         // 恢复字幕库默认（你的仓库），并清缓存
         subtitleRepo = DEFAULT_REPO;
         if (setRefs.repoInput) setRefs.repoInput.value = subtitleRepo;
@@ -113,6 +145,7 @@
         repoCache = { etag: null, data: null, ts: 0, repo: '' };
         subTextCache = {};
         saveSetting('assp_fontScale', 55); saveSetting('assp_borderPx', 0); saveSetting('assp_offsetPct', 0); saveSetting('assp_assBg', '1'); saveSetting('assp_autoJump', '1');
+        saveSetting('assp_danmakuFontScale', 100); saveSetting('assp_danmakuShowOriginal', '1');
         invalidate();
     }
 
@@ -123,14 +156,19 @@
             repoCache = { etag: null, data: null, ts: 0, repo: subtitleRepo };
             loadedSubtitleId = null;
             active = false; events = [];
+            // 一起清掉在线弹幕状态（事件/开关/内存缓存/空响应记录）
+            danmakuEvents = []; danmakuActive = false; danmakuLoadedId = null;
+            for (const k in danmakuCache) delete danmakuCache[k];
+            for (const k in danmakuEmpty) delete danmakuEmpty[k];
+            try { GM_setValue('assp_danmaku_empty', '{}'); } catch (e) {}
             if (typeof overlay !== 'undefined' && overlay) overlay.style.display = 'none';
             showToast('已清除字幕缓存');
         } catch (e) { showToast('清除字幕缓存失败', '#f77'); }
     }
 
     const I18N = {
-        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件', settingsBtn: '设置', fontsize: '字号', border: '边框', font: '字体', offset: '上下偏移', assbg: 'ASS 背景', autoJump: '跳过开头', auto: '默认（跟随字幕）', fontCustom: '或自定义字体名…', fontPlaceholder: '输入字体名，或从建议里选', fontSearch: '搜索字体…', reset: '恢复默认', online: '在线字幕', refresh: '刷新', back: '返回', search: '搜索标题/ID', loading: '加载中…', none: '未找到匹配的字幕', loadFail: '加载失败', repo: '字幕库', loaded: '已加载在线字幕：', prev: '上一页', next: '下一页', play: '打开视频', jump: '跳到该字幕开始', openTime: '打开视频并跳到该时间', jumpErr: '无法跳转', tabVideo: '全部', tabCollection: '合集', backCollection: '返回合集', uncat: '未分类' },
-        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file', settingsBtn: 'Settings', fontsize: 'Font size', border: 'Border', font: 'Font', offset: 'Up/Down', assbg: 'ASS bg', autoJump: 'Skip intro', auto: 'Auto (follow subtitle)', fontCustom: 'or custom font name…', fontPlaceholder: 'Type a font name, or pick from suggestions', fontSearch: 'Search font…', reset: 'Reset', online: 'Online', refresh: 'Refresh', back: 'Back', search: 'Search title/ID', loading: 'Loading…', none: 'No match', loadFail: 'Load failed', repo: 'Repo', loaded: 'Loaded online: ', prev: '‹ Prev', next: 'Next ›', play: 'Play video', jump: 'Jump to start', openTime: 'Open video at this time', jumpErr: 'Cannot seek', tabVideo: 'All', tabCollection: 'Collections', backCollection: 'Back', uncat: 'Uncategorized' }
+        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件', settingsBtn: '设置', fontsize: '字号', border: '边框', font: '字体', offset: '上下偏移', assbg: 'ASS 背景', autoJump: '跳过开头', auto: '默认（跟随字幕）', fontCustom: '或自定义字体名…', fontPlaceholder: '输入字体名，或从建议里选', fontSearch: '搜索字体…', reset: '恢复默认', online: '在线字幕', refresh: '刷新', back: '返回', search: '搜索标题/ID', loading: '加载中…', none: '未找到匹配的字幕', loadFail: '加载失败', repo: '字幕库', loaded: '已加载在线字幕：', prev: '上一页', next: '下一页', play: '打开视频', jump: '跳到该字幕开始', openTime: '打开视频并跳到该时间', jumpErr: '无法跳转', tabVideo: '全部', tabCollection: '合集', backCollection: '返回合集', uncat: '未分类', danmakuOn: '在线弹幕：开', danmakuOff: '在线弹幕：关', danmakuLoad: '正在加载在线弹幕…', danmakuLoaded: '在线弹幕已加载 ', fromCache: '(缓存)', danmakuNone: '该视频没有在线弹幕', danmakuLoadFail: '在线弹幕加载失败', danmakuHide: '已隐藏在线弹幕', danmakuNoId: '当前页没有可识别的视频 ID', danmakuFontsize: '弹幕字号', danmakuShowOrig: '弹幕显示原文' },
+        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file', settingsBtn: 'Settings', fontsize: 'Font size', border: 'Border', font: 'Font', offset: 'Up/Down', assbg: 'ASS bg', autoJump: 'Skip intro', auto: 'Auto (follow subtitle)', fontCustom: 'or custom font name…', fontPlaceholder: 'Type a font name, or pick from suggestions', fontSearch: 'Search font…', reset: 'Reset', online: 'Online', refresh: 'Refresh', back: 'Back', search: 'Search title/ID', loading: 'Loading…', none: 'No match', loadFail: 'Load failed', repo: 'Repo', loaded: 'Loaded online: ', prev: '‹ Prev', next: 'Next ›', play: 'Play video', jump: 'Jump to start', openTime: 'Open video at this time', jumpErr: 'Cannot seek', tabVideo: 'All', tabCollection: 'Collections', backCollection: 'Back', uncat: 'Uncategorized', danmakuOn: 'Online danmaku: on', danmakuOff: 'Online danmaku: off', danmakuLoad: 'Loading online danmaku…', danmakuLoaded: 'Online danmaku loaded ', fromCache: '(cache)', danmakuNone: 'No online danmaku for this video', danmakuLoadFail: 'Failed to load online danmaku', danmakuHide: 'Online danmaku hidden', danmakuNoId: 'No video ID on this page', danmakuFontsize: 'Danmaku font size', danmakuShowOrig: 'Show original' }
     };
     function t(key) { return I18N[uiLang][key]; }
     function applyLang() {
@@ -143,6 +181,7 @@
         uiRefs.bRebind.textContent = t('rebind');
         if (uiRefs.bSettings) uiRefs.bSettings.textContent = t('settingsBtn');
         if (uiRefs.bOnline) uiRefs.bOnline.textContent = t('online');
+        refreshDanmakuBtn();   // 在线弹幕开关（随语言刷新）
         // 设置面板标签
         if (setRefs.sizeLabel) setRefs.sizeLabel.textContent = t('fontsize');
         if (setRefs.borderLabel) setRefs.borderLabel.textContent = t('border');
@@ -150,6 +189,8 @@
         if (setRefs.offsetLabel) setRefs.offsetLabel.textContent = t('offset');
         if (setRefs.assbgLabel) setRefs.assbgLabel.textContent = t('assbg');
         if (setRefs.autoJumpLabel) setRefs.autoJumpLabel.textContent = t('autoJump');
+        if (setRefs.dmSizeLabel) setRefs.dmSizeLabel.textContent = t('danmakuFontsize');
+        if (setRefs.dmShowOrigLabel) setRefs.dmShowOrigLabel.textContent = t('danmakuShowOrig');
         if (setRefs.repoLabel) setRefs.repoLabel.textContent = t('repo');
         if (setRefs.fontSearch) setRefs.fontSearch.placeholder = t('fontSearch');
         if (setRefs.fontUpdate) setRefs.fontUpdate();
@@ -234,16 +275,20 @@
     // 面板两档缩放（CSS zoom：等宽缩放、文字清晰、命中正确）；GM 持久化
     function applyZoom() {
         if (!panel) return;
-        // 记录当前视觉中心。zoom 的缩放原点在左上角，且 right/bottom 锚定会因 zoom 重新布局导致整体跳位；
-        // 这里改成 left/top 锚定并把中心固定回原处，缩放才不会大幅偏离。
+        // 记录当前视觉中心。CSS zoom 会把元素坐标整体放大 z 倍（getBoundingClientRect().left/top = CSS left/top × zoom），
+        // 且 right/bottom 锚定会因 zoom 重新布局导致跳位；所以这里改成 left/top 锚定，并把「希望达到的视觉 left/top」除以 z 再写入，
+        // 使缩放前后视觉中心保持不变（放大/缩小都稳定）。
         const rect = panel.getBoundingClientRect();
         const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+        const z = panelZoom ? 1.2 : 1;
         panel.style.zoom = panelZoom ? '1.2' : '';
         // 只在面板已布局（有尺寸）时才重锚定；buildUI 里尚未 append 时 rect 全为 0，跳过。
         if (rect.width > 0 && rect.height > 0) {
             const r2 = panel.getBoundingClientRect();
-            panel.style.left = (cx - r2.width / 2) + 'px';
-            panel.style.top = (cy - r2.height / 2) + 'px';
+            const dl = cx - r2.width / 2;   // 期望的视觉 left（屏幕坐标）
+            const dt = cy - r2.height / 2;  // 期望的视觉 top（屏幕坐标）
+            panel.style.left = (dl / z) + 'px';
+            panel.style.top = (dt / z) + 'px';
             panel.style.right = 'auto';
             panel.style.bottom = 'auto';
         }
@@ -434,6 +479,41 @@
         box.appendChild(r.row);
         setRefs.offsetLabel = r.label; setRefs.offVal = offVal; setRefs.offInput = offInput;
 
+        // 弹幕字号（与字幕字号分离，滑块 + 可输入数字，限制 40-300，非法回退 100）
+        r = mkRow(t('danmakuFontsize'));
+        const dmSizeInput = document.createElement('input');
+        dmSizeInput.type = 'range'; dmSizeInput.min = '40'; dmSizeInput.max = '300'; dmSizeInput.step = '1'; dmSizeInput.value = settings.danmakuFontScale;
+        dmSizeInput.style.cssText = 'flex:1;';
+        const dmSizeVal = document.createElement('input');
+        dmSizeVal.type = 'text';
+        dmSizeVal.value = settings.danmakuFontScale + '%';
+        dmSizeVal.style.cssText = 'width:50px;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;text-align:right;box-sizing:border-box;';
+        function applyDmSize(v) {
+            let s = String(v || '').replace(/[^0-9]/g, '').trim();
+            let n = parseInt(s, 10);
+            if (!isFinite(n)) n = 100;
+            n = Math.max(40, Math.min(300, n));
+            settings.danmakuFontScale = n;
+            dmSizeVal.value = n + '%';
+            dmSizeInput.value = n;
+            invalidate(); saveSetting('assp_danmakuFontScale', n);
+        }
+        dmSizeInput.addEventListener('input', function () { applyDmSize(dmSizeInput.value); });
+        dmSizeVal.addEventListener('change', function () { applyDmSize(dmSizeVal.value); });
+        dmSizeVal.addEventListener('blur', function () { applyDmSize(dmSizeVal.value); });
+        r.row.appendChild(dmSizeInput); r.row.appendChild(dmSizeVal);
+        box.appendChild(r.row);
+        setRefs.dmSizeLabel = r.label; setRefs.dmSizeVal = dmSizeVal; setRefs.dmSizeInput = dmSizeInput; setRefs.dmSizeApply = applyDmSize;
+
+        // 弹幕显示原文（关 = 只显示译文，不显示下面的原句）
+        const dmOrigRow = document.createElement('div');
+        dmOrigRow.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:8px;';
+        const dmOrig = chk(t('danmakuShowOrig'), settings.danmakuShowOriginal,
+            function (v) { settings.danmakuShowOriginal = v; invalidate(); saveSetting('assp_danmakuShowOriginal', v ? '1' : '0'); });
+        dmOrigRow.appendChild(dmOrig.wrap);
+        box.appendChild(dmOrigRow);
+        setRefs.dmShowOrigLabel = dmOrig.lab; setRefs.dmShowOrigCheck = dmOrig.check;
+
         // ASS 背景 | 跳过开头（自动跳转）—— 同排
         const chkRow = document.createElement('div');
         chkRow.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:8px;';
@@ -554,8 +634,8 @@
         const rowwrap = document.createElement('div');
         rowwrap.style.cssText = 'display:flex;gap:8px;margin-top:8px;';
         const bToggle = mkBtn('', '#43a047', function () {
-            active = !active; ensureOverlay();
-            overlay.style.display = active ? '' : 'none';
+            active = !active;
+            updateOverlayDisplay();
             setStatus(active ? (uiLang === 'zh' ? '已开启，正在跟随播放…' : 'On, following playback…') : (uiLang === 'zh' ? '已隐藏' : 'Hidden'));
         });
         const bRebind = mkBtn('', '#616161', function () {
@@ -567,6 +647,13 @@
         rowwrap.appendChild(bToggle);
         rowwrap.appendChild(bRebind);
         mainBox.appendChild(rowwrap);
+
+        // 在线机翻弹幕开关（与字幕并存；仅用户点击才拉取）
+        const bDanmaku = mkBtn('', '#f57c00', function () { toggleOnlineDanmaku(); });
+        bDanmaku.style.width = '100%';
+        bDanmaku.style.marginTop = '8px';
+        mainBox.appendChild(bDanmaku);
+        uiRefs.bDanmaku = bDanmaku;
 
         // 设置按钮 + 设置面板
         const bSettings = mkBtn('', '#8e24aa', function () {
@@ -677,8 +764,10 @@
             // 只当左键仍按住才拖动；松开（哪怕 pointerup 没触发）立即停止，避免"不按住还跟着鼠标挪"
             if (!drag) return;
             if (!(e.buttons & 1)) { drag = null; return; }
-            panel.style.left = (drag.baseX + (e.clientX - drag.startX)) + 'px';
-            panel.style.top = (drag.baseY + (e.clientY - drag.startY)) + 'px';
+            // CSS 坐标在 zoom 下会被放大 z 倍，故把光标增量除以 z 再写成 left/top，保证视觉上跟手 1:1
+            const z = parseFloat(panel.style.zoom) || 1;
+            panel.style.left = (drag.baseX + (e.clientX - drag.startX) / z) + 'px';
+            panel.style.top = (drag.baseY + (e.clientY - drag.startY) / z) + 'px';
             panel.style.right = 'auto';
             panel.style.bottom = 'auto';
         });
@@ -1289,6 +1378,85 @@
         } catch (e) {}
     }
 
+    // ------------------------------ 在线机翻弹幕（与字幕并存；仅用户点击才拉取）
+    // 拉取 danmaku/<id>.ass；404/空返回 null。注意：全程不自动化，只有 toggleOnlineDanmaku 被点击才拉。
+    async function fetchDanmakuText(id) {
+        const base = repoBase();
+        const r = await fetch(base + '/danmaku/' + encodeURIComponent(id) + '.ass', { cache: 'no-store' });
+        if (!r.ok) return null;
+        const txt = await r.text();
+        return (txt && txt.trim()) ? txt : null;
+    }
+    // 加载指定视频的在线弹幕：命中空响应记录 → 直接跳过；命中内存缓存 → 复用；否则拉一次并缓存。
+    async function loadOnlineDanmaku(id) {
+        const key = danmakuKey(id);
+        // ① 空响应优化：该视频近期已确认"没有弹幕文件"，这次直接跳过，不再发网络请求
+        if (danmakuEmpty[key] && (Date.now() - danmakuEmpty[key]) < DANMAKU_LIFETIME) {
+            return { ok: false, empty: true };
+        }
+        // ② 内存缓存命中：复用并刷新 LRU 时间（含"文件存在但 0 条"的情况）
+        if (danmakuCache[key]) {
+            danmakuCache[key].ts = Date.now();
+            danmakuEvents = danmakuCache[key].events;
+            danmakuLoadedId = id;
+            return { ok: true, from: 'cache', count: danmakuEvents.length };
+        }
+        // ③ 网络拉取
+        const txt = await fetchDanmakuText(id);
+        if (txt) {
+            const evs = /\[script info\]/i.test(txt) ? parseASS(txt) : parseSRT(txt);
+            danmakuCache[key] = { events: evs, ts: Date.now() };
+            trimDanmakuCache();
+            danmakuEvents = evs;
+            danmakuLoadedId = id;
+            return { ok: true, from: 'net', count: evs.length };
+        }
+        // ④ 空响应：记为"该视频无弹幕"，近期不再拉（GM 持久化，跨页面/刷新生效）
+        danmakuEmpty[key] = Date.now();
+        trimDanmakuEmpty();
+        try { GM_setValue('assp_danmaku_empty', JSON.stringify(danmakuEmpty)); } catch (e) {}
+        return { ok: false, empty: true };
+    }
+    // 刷新 overlay 显隐：字幕或弹幕任一开启即显示
+    function updateOverlayDisplay() {
+        ensureOverlay();
+        overlay.style.display = (active || danmakuActive) ? '' : 'none';
+    }
+    // 弹幕按钮文案：随开关状态刷新（含条数）
+    function refreshDanmakuBtn() {
+        if (!uiRefs.bDanmaku) return;
+        uiRefs.bDanmaku.textContent = danmakuActive
+            ? t('danmakuOn') + (danmakuEvents.length ? ' (' + danmakuEvents.length + ')' : '')
+            : t('danmakuOff');
+        uiRefs.bDanmaku.style.background = danmakuActive ? '#0d47a1' : '#f57c00';
+    }
+    // 显示/隐藏在线机翻弹幕（仅用户点击；与字幕互不干扰）
+    async function toggleOnlineDanmaku() {
+        const vid = videoIdFromUrl();
+        if (!vid) { setStatus(t('danmakuNoId')); showToast(t('danmakuNoId'), '#ffb74d'); return; }
+        if (danmakuActive) {
+            danmakuActive = false;
+            updateOverlayDisplay();
+            invalidate();
+            setStatus(t('danmakuHide'));
+            refreshDanmakuBtn();
+            return;
+        }
+        setStatus(t('danmakuLoad'));
+        const r = await loadOnlineDanmaku(vid);
+        if (r.ok) {
+            danmakuActive = true;
+            updateOverlayDisplay();
+            invalidate();
+            setStatus(t('danmakuLoaded') + (r.from === 'cache' ? t('fromCache') : vid) + ' · ' + r.count + ' 条');
+            showToast(t('danmakuLoaded') + r.count + ' 条', '#7f7');
+        } else {
+            const msg = r.empty ? t('danmakuNone') : t('danmakuLoadFail');
+            setStatus(msg); showToast(msg, r.empty ? '#ffb74d' : '#f77');
+        }
+        refreshDanmakuBtn();
+    }
+
     // ------------------------------ ASS
     function parseASS(text) {
         playResW = 1920; playResH = 1080;
@@ -1479,7 +1647,7 @@
             overlay.style.width = w + 'px';
             overlay.style.height = hh + 'px';
         }
-        if (active && events.length) render({ width: w, height: hh });
+        if ((active && events.length) || (danmakuActive && danmakuEvents.length)) render({ width: w, height: hh });
         rafId = requestAnimationFrame(tick);
     }
 
@@ -1490,18 +1658,24 @@
         overlay.textContent = '';
         const h = rect.height, w = rect.width;
         if (!h || !w) return;
-        // ① 收集本时刻所有 active 事件
+        // ① 收集本时刻所有 active 事件（字幕 + 弹幕共存，各自独立输入，互不干扰）
+        //    collect(src, scale, keepOrig)：scale=字号缩放；keepOrig=false 时只保留首行（译文，隐藏原文）
         const act = [];
-        for (const e of events) {
-            if (now < e.startMs || now >= e.endMs) continue;
-            const size = Math.max(12, h * e.fontSize * (settings.fontScale / 100));
-            const lineH = size * 1.25;
-            const lines = e.text.split('\n');
-            const blockH = lines.length * lineH;
-            const mod = e.alignment % 3;
-            const offPx = settings.offsetPct / 100 * h;   // 上下偏移（按视频高度）
-            act.push({ e, size, lineH, lines, blockH, mod, offPx });
+        function collect(src, scale, keepOrig) {
+            for (const e of src) {
+                if (now < e.startMs || now >= e.endMs) continue;
+                const size = Math.max(12, h * e.fontSize * (scale / 100));
+                const lineH = size * 1.25;
+                const allLines = e.text.split('\n');
+                const lines = (keepOrig === false && allLines.length > 1) ? [allLines[0]] : allLines;
+                const blockH = lines.length * lineH;
+                const mod = e.alignment % 3;
+                const offPx = settings.offsetPct / 100 * h;   // 上下偏移（按视频高度）
+                act.push({ e, size, lineH, lines, blockH, mod, offPx });
+            }
         }
+        if (active) collect(events, settings.fontScale, true);
+        if (danmakuActive) collect(danmakuEvents, settings.danmakuFontScale, settings.danmakuShowOriginal);
         // ② 计算每条的基础 y（含 \pos 锚点/样式锚点），并区分是否绝对定位
         for (const a of act) {
             const e = a.e;
@@ -1524,10 +1698,14 @@
         //    - \pos 绝对定位行：固定，仅占位。
         //    - 普通行：首次出现时算好位置并缓存到 e._stackY；存活期间复用缓存，不因其它行消失/新增而重排。
         //    先清掉本帧已消失（不 active）行的缓存，下次出现再重新定。
-        for (const e of events) {
-            const active = (now >= e.startMs && now < e.endMs);
-            if (!active && e._stackY !== undefined) { delete e._stackY; }
+        function clearStaleCache(src) {
+            for (const e of src) {
+                const on = (now >= e.startMs && now < e.endMs);
+                if (!on && e._stackY !== undefined) { delete e._stackY; }
+            }
         }
+        if (active) clearStaleCache(events);
+        if (danmakuActive) clearStaleCache(danmakuEvents);
         const occupied = [];   // {top,bottom} 已占用的垂直区间
         function overlaps(top, bottom) {
             for (const o of occupied) if (top < o.bottom && bottom > o.top) return true;
