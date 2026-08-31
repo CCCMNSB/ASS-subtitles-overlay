@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.45
+// @version      1.49
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。支持会员视频 .enc（用视频自动字幕派生 key 解密）。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -9,8 +9,10 @@
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        unsafeWindow
+// @grant        GM_xmlhttpRequest
 // @connect      youtube.com
 // @connect      www.youtube.com
+// @connect      api.bilibili.com
 // @noframes
 // @updateURL    https://raw.githubusercontent.com/CCCMNSB/ASS-subtitles-overlay/main/ass-subtitle-overlay.user.js
 // @downloadURL  https://raw.githubusercontent.com/CCCMNSB/ASS-subtitles-overlay/main/ass-subtitle-overlay.user.js
@@ -29,6 +31,8 @@
     let events = [];
     let overlay = null;
     let panel = null;
+    let panelZoom = false;                              // 面板是否放大（两档缩放，GM 持久化）
+    let zoomBtn = null;                                 // 缩放按钮引用
     let video = null;
     let active = false;
     let rafId = 0;
@@ -56,7 +60,12 @@
     let onlineOpen = false;
     const onlineRefs = {};                              // 在线字幕界面引用
     let onlineData = [];                                // 拉取的索引列表
+    let collectionsCache = null;                        // 合集分组缓存（onlineData 变化时重建）
+    let onlineSearchTimer = null;                       // 搜索框防抖计时器
     let onlinePage = 0;                                 // 当前已渲染的页
+    let onlineTab = 'videos';                           // 'videos' | 'collections'
+    let activeCollection = null;                       // null=全部列表/合集列表; 非null=某合集详情
+    let biliCoverCache = {};                           // bvid -> B站封面 URL（''=失败）
     const ONLINE_PAGE = 10;                             // 每页条数
     let autoLoadTried = false;                          // 是否已尝试自动匹配
     let loadedSubtitleId = null;                        // 当前已加载的在线字幕 id
@@ -79,6 +88,7 @@
     try { const n = GM_getValue('assp_offsetPct', ''); if (n !== '') settings.offsetPct = +n || 0; } catch (e) {}
     try { const n = GM_getValue('assp_assBg', ''); if (n !== '') settings.assBg = n === '1'; } catch (e) {}
     try { const n = GM_getValue('assp_autoJump', ''); if (n !== '') settings.autoJump = n === '1'; } catch (e) {}
+    try { panelZoom = GM_getValue('assp_zoom', '') === '1'; } catch (e) {}   // 面板缩放状态
     // 实时生效：任何设置改动后把 lastTime 置回 -1，下一帧就重绘一次字幕
     function invalidate() { lastTime = -1; }
     function resetDefaults() {
@@ -117,8 +127,8 @@
     }
 
     const I18N = {
-        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件', settingsBtn: '设置', fontsize: '字号', border: '边框', font: '字体', offset: '上下偏移', assbg: 'ASS 背景', autoJump: '跳过开头', auto: '默认（跟随字幕）', fontCustom: '或自定义字体名…', fontPlaceholder: '输入字体名，或从建议里选', fontSearch: '搜索字体…', reset: '恢复默认', online: '在线字幕', refresh: '刷新', back: '返回', search: '搜索标题/ID', loading: '加载中…', none: '未找到匹配的字幕', loadFail: '加载失败', repo: '字幕库', loaded: '已加载在线字幕：', prev: '上一页', next: '下一页', play: '打开视频', jump: '跳到该字幕开始', openTime: '打开视频并跳到该时间', jumpErr: '无法跳转' },
-        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file', settingsBtn: 'Settings', fontsize: 'Font size', border: 'Border', font: 'Font', offset: 'Up/Down', assbg: 'ASS bg', autoJump: 'Skip intro', auto: 'Auto (follow subtitle)', fontCustom: 'or custom font name…', fontPlaceholder: 'Type a font name, or pick from suggestions', fontSearch: 'Search font…', reset: 'Reset', online: 'Online', refresh: 'Refresh', back: 'Back', search: 'Search title/ID', loading: 'Loading…', none: 'No match', loadFail: 'Load failed', repo: 'Repo', loaded: 'Loaded online: ', prev: '‹ Prev', next: 'Next ›', play: 'Play video', jump: 'Jump to start', openTime: 'Open video at this time', jumpErr: 'Cannot seek' }
+        zh: { title: '字幕叠加', lang: '语言', cn: '中文', load: '加载本地字幕', toggle: '显示 / 隐藏', rebind: '重新绑定视频', ready: '点击“加载本地字幕”选择 ASS/SRT 文件', settingsBtn: '设置', fontsize: '字号', border: '边框', font: '字体', offset: '上下偏移', assbg: 'ASS 背景', autoJump: '跳过开头', auto: '默认（跟随字幕）', fontCustom: '或自定义字体名…', fontPlaceholder: '输入字体名，或从建议里选', fontSearch: '搜索字体…', reset: '恢复默认', online: '在线字幕', refresh: '刷新', back: '返回', search: '搜索标题/ID', loading: '加载中…', none: '未找到匹配的字幕', loadFail: '加载失败', repo: '字幕库', loaded: '已加载在线字幕：', prev: '上一页', next: '下一页', play: '打开视频', jump: '跳到该字幕开始', openTime: '打开视频并跳到该时间', jumpErr: '无法跳转', tabVideo: '全部', tabCollection: '合集', backCollection: '返回合集', uncat: '未分类' },
+        en: { title: 'Subtitles', lang: 'Language', cn: '中文', load: 'Load Local Subtitle', toggle: 'Show / Hide', rebind: 'Re-bind Video', ready: 'Click “Load Local Subtitle” to pick an ASS/SRT file', settingsBtn: 'Settings', fontsize: 'Font size', border: 'Border', font: 'Font', offset: 'Up/Down', assbg: 'ASS bg', autoJump: 'Skip intro', auto: 'Auto (follow subtitle)', fontCustom: 'or custom font name…', fontPlaceholder: 'Type a font name, or pick from suggestions', fontSearch: 'Search font…', reset: 'Reset', online: 'Online', refresh: 'Refresh', back: 'Back', search: 'Search title/ID', loading: 'Loading…', none: 'No match', loadFail: 'Load failed', repo: 'Repo', loaded: 'Loaded online: ', prev: '‹ Prev', next: 'Next ›', play: 'Play video', jump: 'Jump to start', openTime: 'Open video at this time', jumpErr: 'Cannot seek', tabVideo: 'All', tabCollection: 'Collections', backCollection: 'Back', uncat: 'Uncategorized' }
     };
     function t(key) { return I18N[uiLang][key]; }
     function applyLang() {
@@ -141,13 +151,16 @@
         if (setRefs.repoLabel) setRefs.repoLabel.textContent = t('repo');
         if (setRefs.fontSearch) setRefs.fontSearch.placeholder = t('fontSearch');
         if (setRefs.fontUpdate) setRefs.fontUpdate();
-        // 在线字幕界面标签
+        // 在线字幕界面标签（含 全部/合集 tab、返回合集、搜索框占位符）
         if (onlineRefs.bBack) onlineRefs.bBack.textContent = t('back');
         if (onlineRefs.oTitle) onlineRefs.oTitle.textContent = t('online');
         if (onlineRefs.bRefresh) onlineRefs.bRefresh.textContent = t('refresh');
-        if (onlineRefs.search) onlineRefs.search.placeholder = t('search');
+        if (onlineSearch) onlineSearch.placeholder = t('search');
         if (onlineRefs.bPrev) onlineRefs.bPrev.textContent = t('prev');
         if (onlineRefs.bNext) onlineRefs.bNext.textContent = t('next');
+        if (onlineRefs.bTabVideo) onlineRefs.bTabVideo.textContent = t('tabVideo');
+        if (onlineRefs.bTabCol) onlineRefs.bTabCol.textContent = t('tabCollection');
+        if (onlineRefs.bBackCol) onlineRefs.bBackCol.textContent = '← ' + t('backCollection');
         // 高亮当前语言
         uiRefs.segZh.style.background = uiLang === 'zh' ? '#1e88e5' : 'transparent';
         uiRefs.segEn.style.background = uiLang === 'en' ? '#1e88e5' : 'transparent';
@@ -214,6 +227,18 @@
             + 'padding:9px 0;cursor:pointer;font-size:13px;font-family:inherit;';
         b.addEventListener('click', cb);
         return b;
+    }
+
+    // 面板两档缩放（CSS zoom：等宽缩放、文字清晰、命中正确）；GM 持久化
+    function applyZoom() {
+        if (!panel) return;
+        panel.style.zoom = panelZoom ? '1.2' : '';
+        if (zoomBtn) { zoomBtn.textContent = panelZoom ? '⤡' : '⤢'; zoomBtn.style.background = panelZoom ? '#0d47a1' : 'none'; }
+    }
+    function toggleZoom() {
+        panelZoom = !panelZoom;
+        try { GM_setValue('assp_zoom', panelZoom ? '1' : ''); } catch (e) {}
+        applyZoom();
     }
 
     function mkRow(labelText) {
@@ -457,7 +482,13 @@
         const titleRow = document.createElement('div');
         titleRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;';
         const title = document.createElement('div');
-        title.style.cssText = 'font-weight:700;font-size:14px;';
+        title.style.cssText = 'font-weight:700;font-size:14px;flex:1;';
+        zoomBtn = document.createElement('button');
+        zoomBtn.type = 'button';
+        zoomBtn.textContent = '⤢';
+        zoomBtn.setAttribute('title', '放大/缩小窗口');
+        zoomBtn.style.cssText = 'background:none;color:#aaa;border:0;border-radius:6px;font-size:15px;cursor:pointer;line-height:1;padding:0 6px;';
+        zoomBtn.addEventListener('click', toggleZoom);
         const closeBtn = document.createElement('button');
         closeBtn.type = 'button';
         closeBtn.textContent = '×';
@@ -465,8 +496,10 @@
         closeBtn.style.cssText = 'background:none;color:#aaa;border:0;font-size:20px;cursor:pointer;line-height:1;padding:0 4px;';
         closeBtn.addEventListener('click', hideUi);
         titleRow.appendChild(title);
+        titleRow.appendChild(zoomBtn);
         titleRow.appendChild(closeBtn);
         panel.appendChild(titleRow);
+        applyZoom();
         mainBox = document.createElement('div');
         mainBox.style.cssText = '';
         panel.appendChild(mainBox);
@@ -550,12 +583,33 @@
         oHead.appendChild(bBack); oHead.appendChild(oTitle);
         onlineBox.appendChild(oHead);
 
+        // 全部 / 合集 分段切换
+        const tabRow = document.createElement('div');
+        tabRow.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
+        const bTabVideo = mkBtn(t('tabVideo'), '#0d47a1', function () { switchOnlineTab('videos'); });
+        bTabVideo.style.flex = '1'; bTabVideo.style.padding = '6px 0';
+        const bTabCol = mkBtn(t('tabCollection'), '#616161', function () { switchOnlineTab('collections'); });
+        bTabCol.style.flex = '1'; bTabCol.style.padding = '6px 0';
+        tabRow.appendChild(bTabVideo); tabRow.appendChild(bTabCol);
+        onlineBox.appendChild(tabRow);
+
+        // 合集详情时的返回条（默认隐藏）
+        const backRow = document.createElement('div');
+        backRow.style.cssText = 'display:none;align-items:center;gap:6px;margin-bottom:6px;';
+        const bBackCol = mkBtn('← ' + t('backCollection'), '#455a64', function () { activeCollection = null; renderOnlineList(); });
+        bBackCol.style.flex = '1'; bBackCol.style.padding = '5px 0';
+        backRow.appendChild(bBackCol);
+        onlineBox.appendChild(backRow);
+
         const oSearchRow = document.createElement('div');
         oSearchRow.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;';
         onlineSearch = document.createElement('input');
         onlineSearch.type = 'text'; onlineSearch.placeholder = t('search');
         onlineSearch.style.cssText = 'flex:1;background:#2b2b2b;color:#eee;border:0;border-radius:6px;padding:6px;';
-        onlineSearch.addEventListener('input', function () { renderOnlineList(false); });
+        onlineSearch.addEventListener('input', function () {
+            if (onlineSearchTimer) clearTimeout(onlineSearchTimer);
+            onlineSearchTimer = setTimeout(function () { onlineSearchTimer = null; renderOnlineList(); }, 150);
+        });
         const bRefresh = mkBtn(t('refresh'), '#0d47a1', function () { openOnline(true); });
         bRefresh.style.flex = '0 0 52px'; bRefresh.style.padding = '6px 0';
         oSearchRow.appendChild(onlineSearch); oSearchRow.appendChild(bRefresh);
@@ -581,6 +635,8 @@
 
         onlineRefs.bBack = bBack; onlineRefs.oTitle = oTitle; onlineRefs.bRefresh = bRefresh;
         onlineRefs.bPrev = bPrev; onlineRefs.bNext = bNext; onlineRefs.pageInfo = pageInfo;
+        onlineRefs.tabRow = tabRow; onlineRefs.bTabVideo = bTabVideo; onlineRefs.bTabCol = bTabCol;
+        onlineRefs.backRow = backRow; onlineRefs.bBackCol = bBackCol;
 
         document.body.appendChild(panel);
 
@@ -890,12 +946,95 @@
     // ---------- 在线字幕列表渲染（分页）----------
     function clearOnlineList() { while (onlineListEl && onlineListEl.firstChild) onlineListEl.removeChild(onlineListEl.firstChild); }
     function dateKey(d) { var s = String(d || ''); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '0000-00-00'; }
-    function getFilteredList() {
+    function isBV(id) { return /^BV[A-Za-z0-9]{10}$/.test(String(id || '')); }
+    function collectionMeta(c) {
+        const count = uiLang === 'zh' ? c.count + ' 集' : c.count + ' items';
+        return count + (c.latestDate ? ' · ' + c.latestDate : '');
+    }
+    // B站封面（不能从 BV 号直接推导）：查 view API 拿 data.pic，带缓存；失败返回 ''（兜底用占位符）
+    // 用 GM_xmlhttpRequest（不受页面 CSP/CORS 限制），保证在 YouTube/Google 页面也能加载 B站封面；
+    // 拿到的图 URL 加 @128w_72h 尺寸后缀，把 ~100KB 压到 ~15KB。
+    async function bilibiliCover(bvid) {
+        if (bvid in biliCoverCache) return biliCoverCache[bvid];
+        biliCoverCache[bvid] = '';
+        const api = 'https://api.bilibili.com/x/web-interface/view?bvid=' + encodeURIComponent(bvid);
+        let pic = '';
+        try {
+            if (typeof GM_xmlhttpRequest === 'function') {
+                pic = await new Promise(function (resolve) {
+                    GM_xmlhttpRequest({
+                        method: 'GET', url: api, timeout: 8000,
+                        onload: function (resp) {
+                            try { const j = JSON.parse(resp.responseText); resolve((j && j.data && j.data.pic) || ''); }
+                            catch (e) { resolve(''); }
+                        },
+                        onerror: function () { resolve(''); },
+                        ontimeout: function () { resolve(''); }
+                    });
+                });
+            } else {
+                const r = await fetch(api, { cache: 'no-store' });
+                if (r.ok) { const j = await r.json(); pic = (j && j.data && j.data.pic) || ''; }
+            }
+        } catch (e) { /* 失败 -> 占位符 */ }
+        if (pic && pic.indexOf('@') < 0) pic += '@128w_72h.jpg';   // 压小封面
+        if (pic) biliCoverCache[bvid] = pic;
+        return pic;
+    }
+    // 给 <img> 设封面：YouTube 直接 i.ytimg；B站走 API。加载失败/被墙 -> onerror 隐藏图，露出占位符（兜底）
+    function setCover(imgEl, videoId) {
+        if (!videoId || !imgEl) return;
+        imgEl.onerror = function () { imgEl.style.display = 'none'; };
+        if (isBV(videoId)) {
+            bilibiliCover(videoId).then(function (pic) {
+                if (pic && imgEl) { imgEl.src = pic; imgEl.style.display = ''; }
+            }).catch(function () {});
+        } else {
+            imgEl.src = 'https://i.ytimg.com/vi/' + videoId + '/mqdefault.jpg';
+            imgEl.style.display = '';
+        }
+    }
+    // 按 list 字段把条目分组为合集；无 list -> 归名 ''（未分类，排最后）
+    function groupByCollection(data) {
+        const map = {}; const order = [];
+        data.forEach(function (e) {
+            const key = String(e.list || '').trim() || '';
+            if (!(key in map)) { map[key] = { name: key, items: [] }; order.push(key); }
+            map[key].items.push(e);
+        });
+        return order.map(function (k) {
+            const c = map[k];
+            c.items.sort(function (a, b) { var da = dateKey(a.date), db = dateKey(b.date); return db < da ? -1 : db > da ? 1 : 0; });
+            c.count = c.items.length;
+            let latest = '0000-00-00';
+            c.items.forEach(function (e) { var d = dateKey(e.date); if (d > latest) latest = d; });
+            c.latestDate = latest === '0000-00-00' ? '' : latest;
+            c.coverId = c.items.length ? c.items[0].id : null;   // 最新成员 id 作封面
+            return c;
+        });
+    }
+    // 视频列表：全部 tab 或某合集详情（含搜索过滤）
+    function videoList() {
         const q = (onlineSearch ? onlineSearch.value : '').trim().toLowerCase();
         return onlineData.slice()
-            .filter(function (e) { return !q || (String(e.id) + ' ' + String(e.title || '')).toLowerCase().indexOf(q) >= 0; })
+            .filter(function (e) {
+                if (activeCollection != null && (String(e.list || '').trim() || '') !== activeCollection) return false;
+                return !q || (String(e.id) + ' ' + String(e.title || '')).toLowerCase().indexOf(q) >= 0;
+            })
             .sort(function (a, b) { var da = dateKey(a.date), db = dateKey(b.date); return db < da ? -1 : db > da ? 1 : 0; });
     }
+    // 合集列表（含搜索：匹配合集名或任一成员标题/id）
+    function collectionList() {
+        const q = (onlineSearch ? onlineSearch.value : '').trim().toLowerCase();
+        if (!collectionsCache) collectionsCache = groupByCollection(onlineData);   // 分组只算一次，复用
+        return collectionsCache.filter(function (c) {
+            if (!q) return true;
+            // 只按合集名搜；避免命中成员视频的随机 id/标题，导致输入单个字母就冒出大量"无关"合集
+            return String(c.name || '').toLowerCase().indexOf(q) >= 0;
+        });
+    }
+    function isCollectionCardView() { return onlineTab === 'collections' && activeCollection == null; }
+    function isCollectionDetail() { return onlineTab === 'collections' && activeCollection != null; }
     function pageTotal(list) { return Math.max(1, Math.ceil(list.length / ONLINE_PAGE)); }
     function pageText(p, tp, n) {
         return uiLang === 'zh' ? ('第 ' + p + ' / ' + tp + ' 页 · 共 ' + n + ' 条')
@@ -907,6 +1046,18 @@
         if (onlineRefs.bNext) onlineRefs.bNext.disabled = onlinePage >= tp - 1;
         if (onlineRefs.pageInfo) onlineRefs.pageInfo.textContent = pageText(onlinePage + 1, tp, list.length);
     }
+    function updateOnlineTabs() {
+        if (!onlineRefs.bTabVideo || !onlineRefs.bTabCol) return;
+        onlineRefs.bTabVideo.style.background = onlineTab === 'videos' ? '#0d47a1' : '#616161';
+        onlineRefs.bTabCol.style.background = onlineTab === 'collections' ? '#0d47a1' : '#616161';
+    }
+    function switchOnlineTab(tab) {
+        onlineTab = tab;
+        activeCollection = null;
+        onlinePage = 0;
+        updateOnlineTabs();
+        renderOnlineList();
+    }
     function appendOnlineRow(e) {
         const row = document.createElement('div');
         row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:7px 8px;margin-bottom:6px;background:#2b2b2b;border-radius:6px;cursor:pointer;';
@@ -916,7 +1067,6 @@
         title.style.cssText = 'color:#eee;font-size:12.5px;line-height:1.35;white-space:normal;word-break:break-word;overflow-wrap:anywhere;';
         title.textContent = e.title || e.id;
         title.title = e.title || e.id;  // 悬停显示完整标题（tooltip）
-        title.textContent = e.title || e.id;
         const meta = document.createElement('div');
         meta.style.cssText = 'color:#888;font-size:11px;margin-top:2px;';
         meta.textContent = e.id + ' · ' + (e.date || '');
@@ -931,9 +1081,45 @@
         row.addEventListener('click', function () { loadOnlineSubtitle(e.id, e); });
         onlineListEl.appendChild(row);
     }
+    // 合集卡片行：封面(带兜底) + 合集名 + "N 集 · 最新日期"；点行 -> 进入该合集详情
+    function appendCollectionRow(c) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 8px;margin-bottom:6px;background:#2b2b2b;border-radius:6px;cursor:pointer;';
+        const cover = document.createElement('div');
+        cover.style.cssText = 'flex-shrink:0;width:64px;height:36px;border-radius:4px;background:#3b3b3b;overflow:hidden;position:relative;';
+        const img = document.createElement('img');
+        img.alt = ''; img.referrerPolicy = 'no-referrer'; img.loading = 'lazy';
+        // 图片须放在占位符之上（z-index 2 > 1），否则缩略图加载后会被占位符盖住
+        img.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;z-index:2;display:none;';
+        const ph = document.createElement('div');
+        ph.style.cssText = 'position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;color:#888;font-size:14px;font-weight:700;';
+        ph.textContent = (c.name || t('uncat')).charAt(0);
+        cover.appendChild(img); cover.appendChild(ph);
+        const body = document.createElement('div');
+        body.style.cssText = 'flex:1;min-width:0;';
+        const name = document.createElement('div');
+        name.style.cssText = 'color:#eee;font-size:12.5px;line-height:1.35;white-space:normal;word-break:break-word;overflow-wrap:anywhere;';
+        name.textContent = c.name || t('uncat');
+        name.title = name.textContent;
+        const meta = document.createElement('div');
+        meta.style.cssText = 'color:#888;font-size:11px;margin-top:2px;';
+        meta.textContent = collectionMeta(c);
+        body.appendChild(name); body.appendChild(meta);
+        row.appendChild(cover); row.appendChild(body);
+        row.addEventListener('click', function () {
+            activeCollection = c.name;   // ''=未分类
+            onlinePage = 0;
+            renderOnlineList();
+        });
+        onlineListEl.appendChild(row);
+        setCover(img, c.coverId);
+    }
     function renderOnlineList() {
         if (!onlineListEl) return;
-        const list = getFilteredList();
+        const cardView = isCollectionCardView();
+        const detail = isCollectionDetail();
+        if (onlineRefs.backRow) onlineRefs.backRow.style.display = detail ? 'flex' : 'none';
+        const list = cardView ? collectionList() : videoList();
         const tp = pageTotal(list);
         if (onlinePage > tp - 1) onlinePage = tp - 1;
         if (onlinePage < 0) onlinePage = 0;
@@ -948,12 +1134,14 @@
         }
         const start = onlinePage * ONLINE_PAGE;
         const end = Math.min(start + ONLINE_PAGE, list.length);
-        for (let i = start; i < end; i++) appendOnlineRow(list[i]);
+        for (let i = start; i < end; i++) {
+            if (cardView) appendCollectionRow(list[i]); else appendOnlineRow(list[i]);
+        }
         updatePager(list);
         onlineListEl.scrollTop = 0;
     }
     function onlineMove(delta) {
-        const list = getFilteredList();
+        const list = isCollectionCardView() ? collectionList() : videoList();
         const tp = pageTotal(list);
         let p = onlinePage + delta;
         if (p < 0) p = 0;
@@ -970,7 +1158,14 @@
         if (onlineRefs.bRefresh) { onlineRefs.bRefresh.disabled = true; onlineRefs.bRefresh.textContent = '…'; }
         try {
             onlineData = await fetchRepoList(force);
+            collectionsCache = null;    // 索引更新，合集分组下次再算
             onlinePage = 0;
+            // 重置到"全部"tab；清单无任何 list 字段则隐藏"合集"tab（优雅降级，行为同原单列表）
+            onlineTab = 'videos';
+            activeCollection = null;
+            const hasCol = onlineData.some(function (e) { return String(e.list || '').trim(); });
+            if (onlineRefs.tabRow) onlineRefs.tabRow.style.display = hasCol ? 'flex' : 'none';
+            updateOnlineTabs();
             renderOnlineList();
             setStatus((uiLang === 'zh' ? '共 ' : 'Total ') + onlineData.length + ' 条');
         } catch (e) {
@@ -986,6 +1181,7 @@
 
     function closeOnline() {
         onlineOpen = false;
+        if (onlineSearchTimer) { clearTimeout(onlineSearchTimer); onlineSearchTimer = null; }
         if (onlineBox) onlineBox.style.display = 'none';
         if (mainBox) mainBox.style.display = '';
     }
