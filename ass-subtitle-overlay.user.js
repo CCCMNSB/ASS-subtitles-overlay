@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.54
+// @version      1.55
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。支持会员视频 .enc（用视频自动字幕派生 key 解密）。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -959,17 +959,19 @@
 
     // ---------- 在线字幕列表渲染（分页）----------
     function clearOnlineList() { while (onlineListEl && onlineListEl.firstChild) onlineListEl.removeChild(onlineListEl.firstChild); }
-    // 日期 -> 毫秒（任意位年；用数值比较，避免 5 位年按字符串排错；无效返回 -1）
+    // 某年某月的天数（含闰年），用于校验"日历上不存在"的日期
+    function daysInMonth(y, mo) {
+        if (mo === 2) return ((y % 4 === 0 && y % 100 !== 0) || (y % 400 === 0)) ? 29 : 28;
+        return [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mo - 1];
+    }
+    // 日期 -> 数值排序键（**任意位年**：不用有上限的 Date.UTC，改成 y*10000+mo*100+day 单调键，无限大）；
+    // 用 daysInMonth 校验合法日期（4-31、2-30、非闰2-29 等都判无效）；无效返回 -1
     function dateMs(d) {
         var m = /^(\d+)-(\d{2})-(\d{2})$/.exec(String(d || ''));
         if (!m) return -1;
         var y = +m[1], mo = +m[2], day = +m[3];
-        if (mo < 1 || mo > 12 || day < 1 || day > 31) return -1;
-        var ms = Date.UTC(y, mo - 1, day);
-        // 溢出校验（如 2026-02-30 会被 Date.UTC 滚动到 2026-03-02）：回读不一致则判无效，与 App 端 LocalDate.of 对齐
-        var dt = new Date(ms);
-        if (dt.getUTCFullYear() !== y || (dt.getUTCMonth() + 1) !== mo || dt.getUTCDate() !== day) return -1;
-        return ms;
+        if (mo < 1 || mo > 12 || day < 1 || day > daysInMonth(y, mo)) return -1;
+        return y * 10000 + mo * 100 + day;
     }
     function isBV(id) { return /^BV[A-Za-z0-9]{10}$/.test(String(id || '')); }
     function collectionMeta(c) {
