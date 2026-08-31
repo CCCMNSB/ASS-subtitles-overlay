@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ASS Subtitle Overlay（多说话人）
 // @namespace    CCCMNSB
-// @version      1.55
+// @version      1.56
 // @description  在网页 <video> 上加载本地 .ass/.srt，多字幕同时显示 + 按 ASS 原色 + 按 ASS 位置渲染。界面语言中/英可切。支持会员视频 .enc（用视频自动字幕派生 key 解密）。
 // @author       CCCMNSB
 // @match        *://*/*
@@ -234,7 +234,19 @@
     // 面板两档缩放（CSS zoom：等宽缩放、文字清晰、命中正确）；GM 持久化
     function applyZoom() {
         if (!panel) return;
+        // 记录当前视觉中心。zoom 的缩放原点在左上角，且 right/bottom 锚定会因 zoom 重新布局导致整体跳位；
+        // 这里改成 left/top 锚定并把中心固定回原处，缩放才不会大幅偏离。
+        const rect = panel.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
         panel.style.zoom = panelZoom ? '1.2' : '';
+        // 只在面板已布局（有尺寸）时才重锚定；buildUI 里尚未 append 时 rect 全为 0，跳过。
+        if (rect.width > 0 && rect.height > 0) {
+            const r2 = panel.getBoundingClientRect();
+            panel.style.left = (cx - r2.width / 2) + 'px';
+            panel.style.top = (cy - r2.height / 2) + 'px';
+            panel.style.right = 'auto';
+            panel.style.bottom = 'auto';
+        }
         if (zoomBtn) { zoomBtn.textContent = panelZoom ? '⤡' : '⤢'; zoomBtn.style.background = panelZoom ? '#0d47a1' : 'none'; }
     }
     function toggleZoom() {
@@ -646,18 +658,32 @@
         let drag = null;
         panel.addEventListener('pointerdown', function (e) {
             if (e.target.closest('button, input, select')) return;
-            const rect = panel.getBoundingClientRect();
-            drag = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
+            // 用 CSS 未缩放坐标做基准（getBoundingClientRect 在 zoom 下会被放大，导致拖动跳位）
+            const cs = getComputedStyle(panel);
+            let baseX = parseFloat(cs.left), baseY = parseFloat(cs.top);
+            if (!isFinite(baseX) || !isFinite(baseY)) {
+                // cs.left 解析失败（如 auto）时回退：用 rect 并按 zoom 还原成 CSS 坐标
+                const z = parseFloat(panel.style.zoom) || 1;
+                const rect = panel.getBoundingClientRect();
+                baseX = rect.left / z; baseY = rect.top / z;
+            }
+            drag = {
+                baseX: baseX || 0, baseY: baseY || 0,
+                startX: e.clientX, startY: e.clientY
+            };
             e.preventDefault();
         });
         document.addEventListener('pointermove', function (e) {
+            // 只当左键仍按住才拖动；松开（哪怕 pointerup 没触发）立即停止，避免"不按住还跟着鼠标挪"
             if (!drag) return;
-            panel.style.left = (e.clientX - drag.dx) + 'px';
-            panel.style.top = (e.clientY - drag.dy) + 'px';
+            if (!(e.buttons & 1)) { drag = null; return; }
+            panel.style.left = (drag.baseX + (e.clientX - drag.startX)) + 'px';
+            panel.style.top = (drag.baseY + (e.clientY - drag.startY)) + 'px';
             panel.style.right = 'auto';
             panel.style.bottom = 'auto';
         });
         document.addEventListener('pointerup', function () { drag = null; });
+        document.addEventListener('pointercancel', function () { drag = null; });
 
         // 保存引用
         uiRefs.title = title; uiRefs.langLabel = langLabel; uiRefs.segZh = segZh; uiRefs.segEn = segEn;
@@ -1336,11 +1362,22 @@
         if (c4) backColour = c4[1];
         const pos = /\\pos\(([\d.]+),([\d.]+)\)/.exec(text);
         if (pos) { hasPos = true; posX = +pos[1]; posY = +pos[2]; }
+        // \move(x1,y1,x2,y2[,t1,t2])：滚动弹幕。按 (now-start)/(end-start) 从 (x1,y1) 线性插值到 (x2,y2)
+        // 正则容忍参数间空格（如 "1980, 50"）及可选的 t1,t2 时间偏移（相对行开始的 ms）
+        let hasMove = false, moveX1 = 0, moveY1 = 0, moveX2 = 0, moveY2 = 0, moveT1 = 0, moveT2 = 0;
+        const mv = /\\move\s*\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*(?:,\s*(\d+)\s*,\s*(\d+)\s*)?\)/.exec(text);
+        if (mv) {
+            hasMove = true; moveX1 = +mv[1]; moveY1 = +mv[2]; moveX2 = +mv[3]; moveY2 = +mv[4];
+            moveT1 = mv[5] !== undefined ? +mv[5] : 0;
+            moveT2 = mv[6] !== undefined ? +mv[6] : 0;
+        }
         text = text.replace(/\\[Nn]/g, '\n').replace(/\{[^}]*\}/g, '').trim();
         return { startMs: startMs, endMs: endMs, text: text, alignment: alignment, yFrac: yFrac,
             primary: primary, outline: outline, fontSize: fontSize, fontname: fontname,
             bold: bold, outlineW: outlineW, backColour: backColour, borderStyle: borderStyle,
-            hasPos: hasPos, posX: posX, posY: posY };
+            hasPos: hasPos, posX: posX, posY: posY,
+            hasMove: hasMove, moveX1: moveX1, moveY1: moveY1, moveX2: moveX2, moveY2: moveY2,
+            moveT1: moveT1, moveT2: moveT2 };
     }
     function tASS(t) {
         const m = /^(\d+):(\d\d):(\d\d)(?:\.(\d+))?$/.exec(t.trim());
@@ -1469,8 +1506,8 @@
         for (const a of act) {
             const e = a.e;
             let y;
-            if (e.hasPos) {
-                const yA = e.posY / playResH * h;
+            if (e.hasPos || e.hasMove) {
+                const yA = (e.hasPos ? e.posY : e.moveY1) / playResH * h;   // \move 用固定 y1（滚动弹幕 y 不变）
                 if (e.alignment <= 3) y = Math.max(0, yA - a.blockH);
                 else if (e.alignment >= 7) y = Math.min(h - a.blockH, yA);
                 else y = yA - a.blockH / 2;
@@ -1498,7 +1535,7 @@
         }
         // a) 先放置 \pos 绝对定位行 + 已缓存行（它们位置固定）
         for (const a of act) {
-            if (a.e.hasPos) {
+            if (a.e.hasPos || a.e.hasMove) {
                 a.finalY = a.baseY; a.e._stackY = a.finalY;
                 occupied.push({ top: a.finalY, bottom: a.finalY + a.blockH });
             } else if (a.e._stackY !== undefined) {
@@ -1507,7 +1544,7 @@
             }
         }
         // b) 只处理"首次出现、还没缓存"的普通行（按锚点方向避让，算好即缓存）
-        const newOnes = act.filter(a => !a.e.hasPos && a.e._stackY === undefined);
+        const newOnes = act.filter(a => !a.e.hasPos && !a.e.hasMove && a.e._stackY === undefined);
         newOnes.sort(function (a, b) { return b.baseY - a.baseY; });  // 底部(row 大)优先
         for (const a of newOnes) {
             const bH = a.blockH;
@@ -1566,7 +1603,19 @@
                 + 'paint-order:stroke fill;';
             if (bg) css += 'background:' + assColorA(e.backColour) + ';padding:2px 6px;border-radius:2px;';
             let transform;
-            if (e.hasPos) {
+            if (e.hasMove) {
+                // \move：从 (moveX1,y1) 线性插值到 (moveX2,y2)。t1/t2 是相对行开始的 ms，缺省即整条行。
+                const span = e.moveT2 > e.moveT1 ? (e.moveT2 - e.moveT1) : (e.endMs - e.startMs);
+                const tAbs1 = e.startMs + e.moveT1;
+                let prog = span > 0 ? (now - tAbs1) / span : 0;
+                prog = Math.max(0, Math.min(1, prog));
+                const xA = (e.moveX1 + (e.moveX2 - e.moveX1) * prog) / playResW * w;
+                const yA = Math.max(0, Math.min(h - a.blockH, e.moveY1 / playResH * h));
+                css += 'top:' + yA + 'px;';   // 覆盖前面的 baseY/top
+                if (mod === 2) { css += 'left:' + xA + 'px;width:max-content;'; transform = 'translate(calc(-50%), ' + offPx + 'px)'; }
+                else if (mod === 1) { css += 'left:' + (xA - padX) + 'px;'; transform = 'translate(0,' + offPx + 'px)'; }
+                else { css += 'right:' + (w - xA - padX) + 'px;'; transform = 'translate(0,' + offPx + 'px)'; }
+            } else if (e.hasPos) {
                 const xA = e.posX / playResW * w;   // \pos：水平锚点（按对齐方式）
                 if (mod === 2) { css += 'left:' + xA + 'px;width:max-content;'; transform = 'translate(calc(-50%), ' + offPx + 'px)'; }
                 else if (mod === 1) { css += 'left:' + (xA - padX) + 'px;'; transform = 'translate(0,' + offPx + 'px)'; }
