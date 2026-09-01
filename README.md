@@ -45,15 +45,14 @@
 
 
 ### 使用
-<img width="291" height="366" alt="image" src="https://github.com/user-attachments/assets/85f784ca-5907-434d-a60f-7074ac02caec" />
-
-
+<img width="354" height="509" alt="9a9bd4d781e6c4c0338fc8700998a769" src="https://github.com/user-attachments/assets/29130894-91b2-4fc3-85db-5d6b8ebe5fe6" />
 1. 在含 `<video>` 的页面，字幕面板会出现在**右下角**，可通过alt+A键呼出。
 2. 选择面板语言（**中文 / English**）。
 3. 点击 **加载本地字幕** 选择 `.ass` / `.ssa` / `.srt` 文件。
 4. 字幕直接叠加在视频上，随播放显示。
 5. 用 **显示 / 隐藏** 开关，**重新绑定视频** 重新关联视频，**×** 隐藏面板（或按 **Alt+A** 显示/隐藏）。
 6. 跳过开头功能指在线字幕跳转时，会自动跳转至第一条字幕附近。
+7. 若视频存在实时评论，可开启在线弹幕功能。
 
 ### 在线字幕
 
@@ -148,7 +147,9 @@
    <img width="914" height="676" alt="image" src="https://github.com/user-attachments/assets/d33aab8c-7113-4f04-b974-736560f14405" />
 
 ### Usage
-<img width="291" height="366" alt="image" src="https://github.com/user-attachments/assets/85f784ca-5907-434d-a60f-7074ac02caec" />
+
+<img width="367" height="508" alt="53e6ab619ca166bdee820bf006f3d956" src="https://github.com/user-attachments/assets/8430af11-af56-4a88-a112-1a23aafbb8c7" />
+
 
 1. On a page with a `<video>`, the subtitle panel appears at the **bottom-right corner**.
 2. Choose the panel language (**中文 / English**).
